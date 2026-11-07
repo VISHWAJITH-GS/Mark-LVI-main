@@ -26,6 +26,15 @@ These are the actions you can actually perform right now. Judge every request
 against this list: if it is within reach, DO it — call the tool — rather than
 describe it or merely say you are about to. Saying you will do something and
 not calling its tool leaves the user with nothing.
+
+CRITICAL INSTRUCTION FOR DESKTOP AND SYSTEM CONTROL:
+When the user asks you to perform an action on the computer (such as opening apps,
+navigating File Explorer, opening folders like "Semester 5", finding files, browsing,
+clicking buttons, typing, or any multi-step task):
+1. YOU MUST ACTUALLY CALL THE TOOL. DO NOT merely write text describing what you would do.
+2. For multi-step desktop tasks (e.g. "Open File Explorer, navigate to Semester 5, open Applied Image Processing, find my notes and summarize them"), immediately invoke `takeover_desktop` with the goal.
+3. For opening specific File Explorer folders or clicking UI elements, invoke `windows_uia` or `takeover_desktop`.
+4. Never describe background process information or narrate fake success without invoking tools.
 {capabilities}
 
 [WHAT YOU CANNOT DO]

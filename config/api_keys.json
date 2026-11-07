@@ -18,8 +18,8 @@
             "openai_compat@ollama": {
                 "base_url": "http://127.0.0.1:11434/v1",
                 "model": "llama3.2:3b",
-                "max_tools": "14",
-                "max_tool_chars": "12000",
+                "max_tools": "20",
+                "max_tool_chars": "25000",
                 "catalog": "ollama",
                 "api_key": "",
                 "vision": "",
@@ -48,7 +48,7 @@
                 "vision": ""
             }
         },
-        "mode": "gemini",
+        "mode": "pipeline",
         "pipeline": {
             "stt": "whisper@local",
             "llm": "openai_compat@ollama",

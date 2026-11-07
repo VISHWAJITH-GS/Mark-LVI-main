@@ -1152,20 +1152,60 @@ def _extract_all_tool_calls(text: str, known: set[str]) -> list[FunctionCall]:
       ```
       or:
       {"tool": "browser_control", "args": {"action": "go_to", "url": "..."}}
+      or raw parameter JSON:
+      {"action": "new_tab", "url": "https://www.example.com"}
     """
     if not text:
         return []
 
     calls = []
 
-    # 1. Try JSON block first
+    # 1. Try explicit tool/name JSON block first
     single = _parse_prompt_call(text, known)
     if single:
         return [single]
 
+    # 1b. Try raw parameter JSON blocks where tool name might be inferred or in text
+    import re
+    # Look for any JSON dict in text
+    for json_match in re.finditer(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', text):
+        chunk = json_match.group(0)
+        try:
+            obj = json.loads(chunk)
+            if isinstance(obj, dict):
+                # Did the dict contain an action key?
+                action_val = str(obj.get("action", "")).lower()
+                target_tool = None
+                if obj.get("tool") in known:
+                    target_tool = obj["tool"]
+                    args = obj.get("args") or {}
+                elif obj.get("name") in known:
+                    target_tool = obj["name"]
+                    args = obj.get("args") or obj.get("parameters") or {}
+                elif action_val:
+                    # Inferred from action name:
+                    if action_val in ("open_file_explorer_item", "click_element", "type_text", "inspect_window") and "windows_uia" in known:
+                        target_tool = "windows_uia"
+                        args = obj
+                    elif action_val in ("new_tab", "go_to", "navigate", "search", "close_tab") and "browser_control" in known:
+                        target_tool = "browser_control"
+                        args = obj
+                    elif "app_name" in obj and "open_app" in known:
+                        target_tool = "open_app"
+                        args = obj
+                    elif "browser" in text.lower() and "browser_control" in known:
+                        target_tool = "browser_control"
+                        args = obj
+                if target_tool:
+                    calls.append(FunctionCall(id=f"call_{target_tool}_{len(calls)}", name=target_tool, args=args))
+        except Exception:
+            pass
+
+    if calls:
+        return calls
+
     # 2. Extract Python-style function calls: name(arg1=val1, ...)
     import ast
-    import re
 
     # Pattern matches tool_name(...)
     pattern = re.compile(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)', re.DOTALL)

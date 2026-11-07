@@ -90,9 +90,17 @@ def _restore_from_trash(original: Path) -> str:
             f"automatically, but it is there and can be restored by hand.")
 
 
+import string
+
 _SAFE_ROOTS: list[Path] = [
     Path.home(),
 ]
+if _OS == "Windows":
+    for _d in string.ascii_uppercase:
+        _dp = Path(f"{_d}:\\")
+        if _dp.exists():
+            _SAFE_ROOTS.append(_dp)
+
 
 def _is_safe_path(target: Path) -> bool:
     """Is the given path inside _SAFE_ROOTS? If not, reject the operation."""
