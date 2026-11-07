@@ -27,6 +27,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core import gemini as _gemini
 from core import outcome
+from core.action_loader import get_default_registry, ActionRegistry
 
 _IS_WINDOWS = platform.system() == "Windows"
 
@@ -80,11 +81,13 @@ class AgentOrchestrator:
         player=None,
         speak_fn: Optional[Callable[[str], None]] = None,
         log_fn: Optional[LogFn] = None,
+        registry: Optional[ActionRegistry] = None,
     ):
         self.player = player
         self.speak_fn = speak_fn
         self.log_fn = log_fn or (lambda m: print(f"[Orchestrator] {m}"))
         self.vision = GeminiVisionClient()
+        self.registry = registry or get_default_registry()
 
     def log(self, msg: str) -> None:
         self.log_fn(msg)
@@ -212,91 +215,128 @@ Example:
             {"thought": "Execute task directly", "action": "uia_open", "parameters": {"name": goal}}
         ]
 
-    # ── ACT ──────────────────────────────────────────────────────────────────
-    def execute_step(self, step: dict) -> Tuple[bool, str]:
-        """Execute one planned step with verification."""
+    # ── ACT & VERIFY VIA UNIFIED ACTION REGISTRY ─────────────────────────────
+    def execute_step(self, step: dict, previous_results: list[outcome.ActionResult] | None = None) -> Tuple[bool, str]:
+        """Execute one planned step with prerequisite checks and verified status."""
         action = step.get("action", "")
-        params = step.get("parameters", {})
+        params = dict(step.get("parameters", {}))
         thought = step.get("thought", "")
+        requires = step.get("requires", [])
 
-        self.log(f"Executing: {thought or action}")
+        # 1. Dependency & Prerequisite Verification
+        prev = previous_results or []
+        # Check explicit prerequisite indices or action names
+        for req in requires:
+            if isinstance(req, int) and req < len(prev):
+                r = prev[req]
+                if not (r.success and r.verified and r.status == outcome.STATUS_DONE):
+                    err_msg = f"Prerequisite step {req + 1} ({r.action}) was not verified. Halting dependent step: {thought or action}."
+                    self.log(f"⚠️ {err_msg}")
+                    return False, err_msg
+            elif isinstance(req, str):
+                matching = [r for r in prev if r.action == req]
+                if matching and not all(r.success and r.verified for r in matching):
+                    err_msg = f"Prerequisite action '{req}' failed or was unverified. Halting dependent step: {thought or action}."
+                    self.log(f"⚠️ {err_msg}")
+                    return False, err_msg
+
+        # Semantic prerequisite guards (e.g. Bluetooth connection before music playback on buds)
+        if action in ("spotify_control", "video_player"):
+            bt_steps = [r for r in prev if r.action in ("windows_control", "bluetooth_control") and "bluetooth" in str(r.data).lower()]
+            if bt_steps and not all(r.success and r.verified for r in bt_steps):
+                err_msg = "Bluetooth connection prerequisite failed. Refusing to start playback on unconnected device."
+                self.log(f"⚠️ {err_msg}")
+                return False, err_msg
+
+        self.log(f"Executing: {thought or action} [{action}]")
+        _ctx = {"player": self.player, "speak": self.speak_fn, "response": None, "session_memory": None}
+
+        t0 = time.monotonic()
+        act_res: Optional[outcome.ActionResult] = None
 
         try:
-            if action == "open_app":
-                from actions import open_app
-                app_name = params.get("app_name", "")
-                res = open_app.open_app({"app_name": app_name})
-                time.sleep(1.2)
-                return True, f"Launched {app_name}: {res}"
-
+            # 2. Prefer registry execution if registered
+            if self.registry.has(action):
+                act_res = self.registry.execute(action, params, _ctx)
             elif action == "uia_open":
-                from actions import windows_uia
                 name = params.get("name", "")
-                res = windows_uia.open_file_explorer_item(name)
-                time.sleep(1.0)
-                ok = "Opened folder" in res or "Opened file" in res
-                return ok, res
-
+                from actions import windows_uia
+                raw_res = windows_uia.open_file_explorer_item(name)
+                act_res = outcome.normalize_result(raw_res, action_name="uia_open")
             elif action == "click_element":
                 from actions import windows_uia
                 name = params.get("name", "")
                 ctype = params.get("control_type")
-                res = windows_uia.click_element(name=name, control_type=ctype)
-                ok = res.get("status") in ("done", "success")
-                return ok, str(res)
-
+                raw_res = windows_uia.click_element(name=name, control_type=ctype)
+                act_res = outcome.normalize_result(raw_res, action_name="click_element")
             elif action == "type_text":
                 from actions import windows_uia
                 text = params.get("text", "")
-                res = windows_uia.type_text(text)
-                ok = res.get("status") == "done"
-                return ok, str(res)
-
+                raw_res = windows_uia.type_text(text)
+                act_res = outcome.normalize_result(raw_res, action_name="type_text")
+            elif action == "browser_navigate":
+                from actions import browser_control
+                url = params.get("url", "")
+                raw_res = browser_control.browser_control({"action": "navigate", "url": url})
+                act_res = outcome.normalize_result(raw_res, action_name="browser_control")
             elif action == "file_find":
                 from actions import file_controller
                 name = params.get("name", "")
                 p = params.get("path", "home")
-                res = file_controller.find_files(name=name, path=p)
-                return True, res
-
+                raw_res = file_controller.find_files(name=name, path=p)
+                act_res = outcome.normalize_result(raw_res, action_name="file_find")
             elif action == "file_read_and_summarize":
-                return self._find_and_summarize(params)
-
-            elif action == "browser_navigate":
-                from actions import browser_control
-                url = params.get("url", "")
-                res = browser_control.browser_control({"action": "go_to", "url": url})
-                return True, str(res)
-
-            elif action == "windows_control":
-                from actions import windows_control
-                res = windows_control.windows_control(params)
-                # Check for unverified or failure in string or dict result
-                res_str = str(res)
-                ok = "status=done" in res_str
-                if not ok and "status=unverified" in res_str:
-                    ok = False
-                return ok, res_str
-
-            elif action == "spotify_control":
-                from actions import spotify_control
-                res = spotify_control.spotify_control(params)
-                res_str = str(res)
-                ok = "status=done" in res_str
-                return ok, res_str
-
+                ok, summary_msg = self._find_and_summarize(params)
+                act_res = outcome.ActionResult(
+                    status=outcome.STATUS_DONE if ok else outcome.STATUS_FAILED,
+                    action="file_read_and_summarize",
+                    success=ok,
+                    verified=ok,
+                    message=summary_msg,
+                    error=None if ok else summary_msg,
+                )
             elif action == "verify_state":
                 exp = params.get("expected_window", "").lower()
                 obs = self.observe_screen()
                 curr = obs.get("window_title", "").lower()
                 ok = exp in curr
-                return ok, f"Verified state: window contains '{exp}' (current: '{curr}')"
-
+                act_res = outcome.ActionResult(
+                    status=outcome.STATUS_DONE if ok else outcome.STATUS_FAILED,
+                    action="verify_state",
+                    success=ok,
+                    verified=ok,
+                    message=f"Verified: '{exp}' in '{curr}'" if ok else f"Mismatch: expected '{exp}' but current is '{curr}'",
+                )
             else:
-                return False, f"Unknown action: {action}"
+                act_res = outcome.ActionResult(
+                    status=outcome.STATUS_UNSUPPORTED,
+                    action=action,
+                    success=False,
+                    verified=False,
+                    message=f"Unknown action: {action}",
+                    error=f"Tool '{action}' not recognized",
+                )
 
         except Exception as e:
-            return False, f"Execution failed: {e}"
+            act_res = outcome.ActionResult(
+                status=outcome.STATUS_FAILED,
+                action=action,
+                success=False,
+                verified=False,
+                message=f"Execution failed: {e}",
+                error=str(e),
+                duration_ms=(time.monotonic() - t0) * 1000,
+            )
+
+        # 3. Verification: Only status=done and verified=True count as success
+        is_ok = bool(act_res.status == outcome.STATUS_DONE and act_res.success and act_res.verified)
+        result_desc = act_res.message or act_res.to_speech_text()
+
+        if act_res.status == outcome.STATUS_UNVERIFIED:
+            is_ok = False
+            result_desc = f"[UNVERIFIED] {result_desc}"
+
+        return is_ok, result_desc
 
     def _find_and_summarize(self, params: dict) -> Tuple[bool, str]:
         """Locate notes files on disk and summarize content via Gemini."""
@@ -364,6 +404,7 @@ Example:
 
         self.log(f"Generated {len(plan)} execution steps.")
         results_log = []
+        step_results: list[outcome.ActionResult] = []
         step_idx = 0
 
         while step_idx < min(len(plan), max_steps):
@@ -371,7 +412,16 @@ Example:
             thought = current.get("thought", "")
             action = current.get("action", "")
 
-            ok, result_msg = self.execute_step(current)
+            ok, result_msg = self.execute_step(current, previous_results=step_results)
+            # Create snapshot ActionResult for tracking dependencies
+            st_obj = outcome.ActionResult(
+                status=outcome.STATUS_DONE if ok else outcome.STATUS_FAILED,
+                action=action,
+                success=ok,
+                verified=ok,
+                message=result_msg,
+            )
+            step_results.append(st_obj)
             results_log.append(f"Step {step_idx + 1} ({action}): {'✓' if ok else '✗'} {result_msg}")
 
             if not ok:

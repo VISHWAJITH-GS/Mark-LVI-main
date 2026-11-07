@@ -138,10 +138,37 @@
     <div class="logo"><em>J</em>ARVIS</div>
     <div class="pill" id="pill"><span class="dot"></span><span id="st">Connecting</span></div>
     <div class="enc-badge" id="enc">AES-GCM</div>
+    <button class="pill" id="skills-btn" onclick="toggleSkillsModal()" style="cursor:pointer;border-color:var(--accent);color:var(--accent);margin-left:6px;">SKILLS</button>
     <div class="spacer"></div>
     <div class="url">__IP__:__PORT__</div>
   </header>
   <main id="feed"></main>
+
+  <!-- ── SKILLS MODAL ── -->
+  <div id="skills-modal" style="display:none;position:fixed;inset:0;background:rgba(7,9,15,0.85);backdrop-filter:blur(8px);z-index:100;padding:20px;overflow-y:auto;align-items:center;justify-content:center;">
+    <div style="background:#0c0f1d;border:1px solid var(--border);border-radius:16px;max-width:700px;width:100%;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,0.6);display:flex;flex-direction:column;gap:16px;margin:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <h2 style="font-size:16px;letter-spacing:1px;font-weight:700;">Learned Skills Library</h2>
+          <span id="skill-learning-badge" style="display:none;font-size:10px;padding:3px 8px;border-radius:99px;background:rgba(239,68,68,0.2);color:#ef4444;border:1px solid rgba(239,68,68,0.4);font-weight:700;">🔴 RECORDING</span>
+        </div>
+        <button onclick="toggleSkillsModal()" style="background:transparent;border:none;color:var(--muted);font-size:18px;cursor:pointer;">✕</button>
+      </div>
+
+      <div id="learning-banner" style="display:none;background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.3);padding:10px 14px;border-radius:10px;font-size:12px;">
+        <strong>Active Learning Session:</strong> <span id="learning-goal-text"></span>
+      </div>
+
+      <div id="skills-list" style="display:flex;flex-direction:column;gap:10px;max-height:50vh;overflow-y:auto;padding-right:4px;">
+        <div style="color:var(--muted);font-size:13px;text-align:center;padding:20px;">Loading skills...</div>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);padding-top:12px;">
+        <button class="btn" onclick="loadSkills()" style="background:var(--surface);border:1px solid var(--border);color:var(--text);">↻ Refresh</button>
+        <button class="btn btn-send" onclick="toggleSkillsModal()">Close</button>
+      </div>
+    </div>
+  </div>
   <footer>
     <input id="inp" placeholder="Send a command to JARVIS…" autocomplete="off">
     <label class="btn-attach" for="file-inp" title="Send file">📎</label>
@@ -590,6 +617,132 @@
         if (w.readyState < 2) w.close();
       }
       _micIdle();
+    }
+
+    // ── Skills Library Logic ──────────────────────────────────────────────────
+    async function toggleSkillsModal() {
+      const modal = document.getElementById('skills-modal');
+      const isHidden = modal.style.display === 'none' || !modal.style.display;
+      modal.style.display = isHidden ? 'flex' : 'none';
+      if (isHidden) {
+        await loadSkills();
+      }
+    }
+
+    async function loadSkills() {
+      const container = document.getElementById('skills-list');
+      const banner = document.getElementById('learning-banner');
+      const badge = document.getElementById('skill-learning-badge');
+      const goalTxt = document.getElementById('learning-goal-text');
+
+      try {
+        // 1. Check learning status
+        const statusRes = await _authFetch('/api/skills/learning-status');
+        if (statusRes.ok) {
+          const sData = await statusRes.json();
+          if (sData.is_active && sData.session) {
+            badge.style.display = 'inline-block';
+            banner.style.display = 'block';
+            goalTxt.textContent = `"${sData.session.goal}" (${sData.session.event_count || 0} events recorded)`;
+          } else {
+            badge.style.display = 'none';
+            banner.style.display = 'none';
+          }
+        }
+
+        // 2. Load skills
+        const res = await _authFetch('/api/skills');
+        if (!res.ok) throw new Error('Failed to load skills');
+        const data = await res.json();
+        const skills = data.skills || [];
+
+        if (skills.length === 0) {
+          container.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:20px;">No skills learned yet. Ask JARVIS: "Learn how to use Claude" to demonstrate a workflow.</div>';
+          return;
+        }
+
+        container.innerHTML = skills.map(s => {
+          const isApproved = s.status === 'approved';
+          const statusBg = isApproved ? 'rgba(34,197,94,0.15)' : 'rgba(234,179,8,0.15)';
+          const statusCol = isApproved ? '#22c55e' : '#eab308';
+          const riskBg = s.permissions === 'destructive' ? 'rgba(239,68,68,0.15)' : 'rgba(99,102,241,0.15)';
+          const riskCol = s.permissions === 'destructive' ? '#ef4444' : '#818cf8';
+
+          return `
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                <div>
+                  <div style="font-size:14px;font-weight:700;">${esc(s.name)}</div>
+                  <div style="font-size:11px;color:var(--muted);margin-top:2px;">${esc(s.description || '')}</div>
+                </div>
+                <div style="display:flex;gap:6px;">
+                  <span style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:4px;background:${riskBg};color:${riskCol};text-transform:uppercase;">${esc(s.permissions)}</span>
+                  <span style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:4px;background:${statusBg};color:${statusCol};text-transform:uppercase;">${esc(s.status)}</span>
+                </div>
+              </div>
+              <div style="font-size:11px;color:var(--muted);display:flex;gap:12px;">
+                <span>App: <strong>${esc(s.application || 'Desktop')}</strong></span>
+                <span>Steps: <strong>${(s.steps || []).length}</strong></span>
+                <span>ID: <code style="font-family:monospace;">${esc(s.id)}</code></span>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:4px;">
+                ${!isApproved ? `<button onclick="approveSkill('${s.id}')" style="background:rgba(34,197,94,0.2);border:1px solid rgba(34,197,94,0.4);color:#22c55e;padding:5px 10px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">✓ Approve</button>` : ''}
+                <button onclick="testSkill('${s.id}')" style="background:rgba(99,102,241,0.2);border:1px solid rgba(99,102,241,0.4);color:#818cf8;padding:5px 10px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">🧪 Test</button>
+                <button onclick="deleteSkill('${s.id}')" style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:#ef4444;padding:5px 10px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;margin-left:auto;">✕ Delete</button>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (err) {
+        container.innerHTML = `<div style="color:#ef4444;font-size:13px;padding:12px;">Error: ${esc(err.message)}</div>`;
+      }
+    }
+
+    async function approveSkill(id) {
+      try {
+        const res = await _authFetch(`/api/skills/${id}/approve`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success || data.status === 'done') {
+          toast('Skill Approved!');
+          loadSkills();
+        } else {
+          toast(data.message || 'Approval failed');
+        }
+      } catch (err) {
+        toast('Approval error: ' + err.message);
+      }
+    }
+
+    async function testSkill(id) {
+      toast('Testing skill...');
+      try {
+        const res = await _authFetch(`/api/skills/${id}/test`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+        const data = await res.json();
+        if (data.success || data.status === 'done') {
+          toast('Test Passed!');
+        } else {
+          toast(data.message || 'Test failed');
+        }
+        loadSkills();
+      } catch (err) {
+        toast('Test error: ' + err.message);
+      }
+    }
+
+    async function deleteSkill(id) {
+      if (!confirm(`Delete skill "${id}"?`)) return;
+      try {
+        const res = await _authFetch(`/api/skills/${id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.success || data.status === 'done') {
+          toast('Skill deleted');
+          loadSkills();
+        } else {
+          toast(data.message || 'Delete failed');
+        }
+      } catch (err) {
+        toast('Delete error: ' + err.message);
+      }
     }
   </script>
 </body>

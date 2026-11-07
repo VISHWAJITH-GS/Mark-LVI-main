@@ -707,8 +707,24 @@ class _BrowserSession:
         already = appidentity.running(self.browser_name)
         if already:
             print(f"[Browser] {self.browser_name} is already running "
-                  f"({len(already)} processes) — its profile is locked, so the "
-                  f"separate automation profile will be used.")
+                  f"({len(already)} processes). Checking for Chrome DevTools remote debugging bridge...")
+            if engine_name == "chromium":
+                for cdp_port in (9222, 9223):
+                    try:
+                        import urllib.request
+                        req = urllib.request.Request(f"http://127.0.0.1:{cdp_port}/json/version", headers={"User-Agent": "JARVIS"})
+                        with urllib.request.urlopen(req, timeout=0.8) as resp:
+                            if resp.status == 200:
+                                cdp_endpoint = f"http://127.0.0.1:{cdp_port}"
+                                print(f"[Browser] 🔗 Attaching to existing user session via CDP: {cdp_endpoint}")
+                                self._context = await engine_obj.connect_over_cdp(cdp_endpoint)
+                                self._page = await self._adopt_page()
+                                self.profile_kind = "cdp_attached"
+                                print(f"[Browser] ✅ Successfully connected to existing {self.browser_name} session!")
+                                return
+                    except Exception:
+                        pass
+            print(f"[Browser] Remote debugging port 9222/9223 not detected — {self.browser_name} profile is locked, so the separate automation profile will be used.")
         else:
             try:
                 self._context = await engine_obj.launch_persistent_context(profile, **kwargs)

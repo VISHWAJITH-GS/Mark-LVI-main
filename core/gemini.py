@@ -276,6 +276,19 @@ def is_unavailable_error(err: str) -> bool:
             or "unavailable" in low or "deadline_exceeded" in low)
 
 
+def is_transient_error(err: str) -> bool:
+    """Network drop, keepalive timeout, 1011, or temporary deadline."""
+    low = str(err).lower()
+    return (
+        is_unavailable_error(err)
+        or "1011" in err
+        or "keepalive" in low
+        or "ping timeout" in low
+        or "connection reset" in low
+        or "timed out" in low
+    )
+
+
 def is_gone_error(err: str) -> bool:
     """The model is not there, or not ours to use — a different thing from busy."""
     low = err.lower()
@@ -580,22 +593,15 @@ def _provider_settings() -> tuple[str, bool]:
 
 
 def _provider_rungs(tier: str) -> tuple[str, ...]:
-    """The configured side-call provider, as a ladder rung — or nothing.
-
-    SEARCH is excluded deliberately. Grounded search needs
-    `candidates[...].grounding_metadata`, which only Google's REST models
-    produce; a provider would return a confident answer with no sources behind
-    it, which is worse than saying it cannot search. The same reasoning already
-    keeps the Live rung off that ladder.
+    """Google Gemini API is the sole reasoning engine across the system.
+    Third-party and local LLM provider fallbacks are disabled in accordance
+    with the non-negotiable architectural requirements.
     """
-    if tier == SEARCH:
-        return ()
-    pid, _ = _provider_settings()
-    return (PROVIDER_PREFIX + pid,) if pid else ()
+    return ()
 
 
 def _provider_first() -> bool:
-    return _provider_settings()[1]
+    return False
 
 
 def _to_openai_messages(contents, config) -> tuple[list[dict], Optional[float]]:
@@ -630,26 +636,8 @@ def _to_openai_messages(contents, config) -> tuple[list[dict], Optional[float]]:
 
 
 def _provider_call(model: str, contents, config, timeout_ms: int):
-    """One generation through a configured provider. Raises like every other
-    rung, so the loop's error classification applies to it unchanged."""
-    from memory.config_manager import get_provider_config
-    from providers import registry
-
-    pid = model[len(PROVIDER_PREFIX):]
-    cfg = get_provider_config(pid)
-    missing = registry.missing_fields(pid, cfg)
-    if missing:
-        raise RuntimeError(f"404 not configured: {', '.join(missing)}")
-
-    llm = registry.build(pid, cfg)
-    messages, temperature = _to_openai_messages(contents, config)
-    text_out, _calls = llm.complete(
-        messages, tools=None,
-        timeout=max(MIN_TIMEOUT_MS, int(timeout_ms)) / 1000.0,
-        temperature=temperature)
-    if not (text_out or "").strip():
-        raise RuntimeError("the provider returned an empty answer")
-    return _Reply(text_out)
+    """Google Gemini API is the sole AI reasoning engine across the system."""
+    raise RuntimeError("Google Gemini API is the sole AI reasoning engine. Local and third-party LLM inference is disabled.")
 
 
 def call(contents, tier: str = FAST, config=None,

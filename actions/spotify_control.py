@@ -349,6 +349,14 @@ def spotify_control(parameters: dict = None, player=None, **kwargs) -> str:
         launch_spotify()
         return outcome.done("spotify_control", action="open", message="Spotify opened.")
 
+    if action in ("search", "find", "search_track"):
+        if not query:
+            return outcome.failed("spotify_control", "No track name specified to search.")
+        cand = search_spotify_track(query, artist=artist)
+        if cand:
+            return outcome.done("spotify_control", action="search_track", track=cand["title"], artist=artist, uri=cand.get("uri", ""), verified=True)
+        return outcome.failed("spotify_control", f"No Spotify tracks found matching '{query}'.")
+
     if action in ("play", "play_track", "search_and_play"):
         if not query:
             return outcome.failed("spotify_control", "No track name specified to play.")

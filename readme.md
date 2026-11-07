@@ -9,37 +9,32 @@ A real-time voice AI that can hear, see, speak, and control your computer — on
 
 ## ✨ Overview
 
-Mark LV gave the assistant a screen. **Mark LVI lets you choose what runs it.**
+**Mark LVI** transforms JARVIS into a verified, intelligent Windows desktop AI assistant.
 
-Until now this was a Gemini assistant, and only that. If you had no quota left, no
-connection, or a rule that says your microphone does not leave the building, you
-had no assistant. Mark LVI adds a second way to hold the conversation — speech
-recognition, a language model and a voice, assembled from parts you pick in
-⚙ → **ENGINE & PROVIDERS** — and a way to point the assistant's own background
-requests at a different model without touching the voice at all.
+Built with **Google Gemini API as the sole reasoning engine**, Mark LVI delivers native low-latency voice interaction via Gemini Live, robust multimodal vision reasoning, and a unified desktop execution architecture.
 
-The local model can be on your machine (Ollama, LM Studio, llama.cpp, vLLM) or
-somebody else's API (OpenAI, Groq, DeepSeek, Mistral, xAI, OpenRouter, Together).
-Both are the same setting, because all of them speak the same protocol.
+### Key Architectural Pillars
 
-**None of it costs anything if you do not use it.** On a default install the
-`providers/` folder is never imported — not at startup, not on a tool call, not
-when the settings drawer opens. Measured: the decision takes **0.16 ms** and
-loads nothing. The folder can be deleted, and deleting it changes nothing.
+1. **Sole AI Reasoning Engine:**
+   - **Google Gemini API** handles all high-level planning, tool selection, natural language understanding, and visual inspection.
+   - **Gemini Live API** powers real-time bi-directional audio streaming with instant acknowledgment and native voice synthesis.
+   - No local LLMs (Ollama, Llama, Qwen) or third-party inference fallbacks.
+   - Local Python, Windows APIs, UI Automation, and Playwright handle execution and deterministic verification.
 
-Everything the assistant already does carries over untouched. A local engine
-inherits the avatar, the lip-sync, the self-echo guard, push-to-talk, the wake
-word, memory, undo, the confirmation gate and every action and plugin — because
-it enters through the same door the Live session always did.
+2. **Unified Tool Execution Architecture:**
+   - Single authoritative tool declaration and execution registry (`core/action_loader.py`).
+   - Standardized `ActionResult` contract across all tools: `status` (`done`, `unverified`, `failed`, `needs_confirmation`, `started`, `unsupported`), `action`, `success`, `verified`, `message`, `data`, `error`, `duration_ms`.
+   - Never assumes success from return codes — every outcome is strictly observed and verified before reporting.
 
-Mark LVI also changes what the assistant is allowed to CLAIM. Every tool that
-drives an application now answers with what it observed rather than with what it
-attempted: `done` means it was checked, `unverified` means the request went out
-and could not be confirmed — and the assistant says exactly that instead of
-rounding it off to "done". Opening an app watches the process table for it.
-Closing one asks the application politely, then checks whether it went.
+3. **Intelligent Autonomous Orchestrator:**
+   - Full **Observe → Plan → Execute → Verify → Recover** loop.
+   - Semantic prerequisite and dependency validation (e.g. failing a Bluetooth connection halts dependent music playback).
+   - Bounded retries and error classification with alternative execution paths.
 
-It's not just an assistant — it's an extension of your digital life.
+4. **Security & Permission Safeguards:**
+   - All runtime credentials kept strictly outside source control (`config/api_keys.json` in `.gitignore`, template in `config/api_keys.template.json`).
+   - Multi-tier permission framework (`READ_ONLY`, `NORMAL`, `SENSITIVE`, `DESTRUCTIVE`) with mandatory user confirmation for irreversible operations.
+   - Automatic credential scanning and redaction in logs and memory.
 
 ---
 
@@ -68,11 +63,10 @@ It's not just an assistant — it's an extension of your digital life.
 | 🔗 Session Continuity | A dropped connection, a voice change or a device change no longer wipes the conversation |
 | 🧩 Plugin System | Drop a single `.py` file into `plugins/` — JARVIS learns a new skill on next launch |
 | 📺 Video on the HUD | Plays YouTube, a local file or any video URL **where the avatar sits** — starts muted, sound on request |
-| 🪜 Model Ladder | Nine Gemini models in one measured order — a quota, a timeout or an outage steps to the next rung instead of failing |
-| 🔌 Choose Your Engine | Gemini Live, or your own STT + LLM + TTS — picked in the UI, no file editing |
-| 🏠 Local & Third-Party Models | Ollama · LM Studio · llama.cpp · vLLM · OpenAI · Groq · DeepSeek · Mistral · xAI · OpenRouter — one setting, because they share a protocol |
-| 🗣️ Local Speech | Whisper on your CPU for hearing, Piper for speaking — **~50 languages**, neural, entirely offline |
-| 🌍 The Voice Follows You | Whisper hears which language you spoke; the answer comes back in that language's voice, switching mid-conversation |
+| 🪜 Gemini Model Ladder | Nine Gemini models in measured order — handles quotas or timeouts by stepping to the next rung |
+| ⚡ Unified Tool Architecture | Single authoritative registry, standardized `ActionResult` contract, verified outcomes |
+| 🛡️ Security & Permissions | Multi-tier permissions (`READ_ONLY`, `NORMAL`, `SENSITIVE`, `DESTRUCTIVE`) and secret scanning |
+| 🧠 Structured Memory | Segregated short-term context, task history, and persistent user preferences |
 | 🤫 Reasoning Stays Private | `` before answering, and several servers pass that through as ordinary content. Without a filter the assistant reads its own reasoning aloud: half a minute of *"the user is greeting you, you should acknowledge warmly..."* spoken in full, before the greeting. It also lands in the log, the session summary and the conversation history, where it costs context on every later turn.
 
 It is filtered on the stream rather than with a pattern, because a tag is regularly split across two chunks — `"<thi"` then `"nk>"`. Tested against two hundred random chunk boundaries.

@@ -44,6 +44,56 @@ PROMPT_INDEX_CHARS = 420
 # with forty stored preferences still gets their sister into the prompt.
 PROMPT_MAX_PER_CATEGORY = 6
 
+# ── In-Memory Short-Term and Task Memory ─────────────────────────────────────
+_short_term_context: dict = {}
+_task_history: list[dict] = []
+_mem_lock = Lock()
+
+
+def get_short_term_context() -> dict:
+    """Return active short-term conversation & application context."""
+    with _mem_lock:
+        return dict(_short_term_context)
+
+
+def update_short_term_context(updates: dict) -> None:
+    """Update active temporary execution context (active window, task status)."""
+    with _mem_lock:
+        _short_term_context.update(updates or {})
+
+
+def clear_short_term_context() -> None:
+    """Clear active temporary context."""
+    with _mem_lock:
+        _short_term_context.clear()
+
+
+def record_task_step(action: str, status: str, verified: bool, details: dict | None = None) -> None:
+    """Record a completed or attempted task step into short-term task memory."""
+    with _mem_lock:
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "action": action,
+            "status": status,
+            "verified": verified,
+            "details": details or {},
+        }
+        _task_history.append(entry)
+        if len(_task_history) > 100:
+            _task_history.pop(0)
+
+
+def get_task_history(limit: int = 20) -> list[dict]:
+    """Retrieve recent task execution steps."""
+    with _mem_lock:
+        return list(_task_history[-limit:])
+
+
+def clear_task_history() -> None:
+    with _mem_lock:
+        _task_history.clear()
+
+
 def _empty_memory() -> dict:
     return {
         "identity":      {},
@@ -147,7 +197,11 @@ def _recursive_update(target: dict, updates: dict) -> bool:
             if _recursive_update(target[key], value):
                 changed = True
         else:
-            new_val  = _truncate_value(str(value["value"] if isinstance(value, dict) else value))
+            raw_v = str(value["value"] if isinstance(value, dict) else value)
+            # Security: redact secrets or API keys from being stored into long-term memory
+            from memory.config_manager import redact_secret
+            clean_val = redact_secret(raw_v)
+            new_val  = _truncate_value(clean_val)
             entry    = {"value": new_val, "updated": datetime.now().strftime("%Y-%m-%d")}
             existing = target.get(key, {})
             if not isinstance(existing, dict) or existing.get("value") != new_val:

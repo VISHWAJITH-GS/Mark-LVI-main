@@ -33,6 +33,8 @@ import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
+import time
+from core import outcome
 
 _NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
 _DEFAULT_PARAMS = {"type": "OBJECT", "properties": {}}
@@ -116,6 +118,15 @@ class ActionRecord:
     #          is in force. Nothing is deleted: Gemini still gets the full text.
     tier: Optional[str] = None
     brief: Optional[str] = None
+    permission: str = "normal"  # "read_only" | "normal" | "sensitive" | "destructive"
+
+    def validate_parameters(self, parameters: dict) -> tuple[bool, str]:
+        schema = self.parameters or {}
+        required = schema.get("required", [])
+        for req in required:
+            if req not in parameters or parameters[req] is None or parameters[req] == "":
+                return False, f"Missing required parameter '{req}'"
+        return True, ""
 
 
 class ActionRegistry:
@@ -145,6 +156,9 @@ class ActionRegistry:
     def has(self, name: str) -> bool:
         return name in self._actions
 
+    def has_action(self, name: str) -> bool:
+        return self.has(name)
+
     def scheduling(self, name: str) -> Optional[str]:
         """How this action's result should re-enter the conversation, if it said."""
         rec = self._actions.get(name)
@@ -153,17 +167,91 @@ class ActionRegistry:
     def names(self) -> set[str]:
         return set(self._actions.keys())
 
-    # -- called by main.py from _execute_tool --
-    def run(self, name: str, parameters: dict, ctx: dict | None = None) -> str:
+    def get_action_record(self, name: str) -> Optional[ActionRecord]:
+        return self._actions.get(name)
+
+    def get_action(self, name: str) -> Optional[ActionRecord]:
+        return self.get_action_record(name)
+
+    def _validate_parameters(self, rec: ActionRecord, parameters: dict) -> tuple[bool, str]:
+        schema = rec.parameters or {}
+        props = schema.get("properties", {})
+        required = schema.get("required", [])
+        for req in required:
+            if req not in parameters or parameters[req] is None or parameters[req] == "":
+                return False, f"Missing required parameter '{req}'"
+        return True, ""
+
+    def execute(self, name: str, parameters: dict, ctx: dict | None = None) -> outcome.ActionResult:
+        """Authoritative execution method returning structured ActionResult."""
+        t0 = time.monotonic()
         rec = self._actions.get(name)
         if rec is None or not rec.valid:
-            return f"Action '{name}' is not available."
+            dur = (time.monotonic() - t0) * 1000
+            return outcome.ActionResult(
+                status=outcome.STATUS_UNSUPPORTED,
+                action=name,
+                success=False,
+                verified=False,
+                message=f"Action '{name}' is not available.",
+                error=f"Action '{name}' is not registered or valid.",
+                duration_ms=dur,
+            )
+
+        val_ok, val_err = self._validate_parameters(rec, parameters or {})
+        if not val_ok:
+            dur = (time.monotonic() - t0) * 1000
+            return outcome.ActionResult(
+                status=outcome.STATUS_FAILED,
+                action=name,
+                success=False,
+                verified=False,
+                message=f"Invalid arguments for {name}: {val_err}",
+                error=val_err,
+                duration_ms=dur,
+            )
+
+        from core import permissions
+        perm_level = permissions.get_action_permission(name, parameters)
+        if permissions.requires_confirmation(name, parameters) and not parameters.get("confirmed"):
+            dur = (time.monotonic() - t0) * 1000
+            res = outcome.ActionResult(
+                status=outcome.STATUS_NEEDS_CONFIRMATION,
+                action=name,
+                success=False,
+                verified=False,
+                message=f"Action '{name}' is classified as {perm_level} and requires explicit confirmation before executing.",
+                duration_ms=dur,
+            )
+            permissions.log_action_audit(name, parameters or {}, perm_level, res.status, res.verified, res.error)
+            return res
+
         try:
-            return _call_handler(rec.handler, parameters, ctx or {}) or "Done."
+            raw = _call_handler(rec.handler, parameters or {}, ctx or {})
+            dur = (time.monotonic() - t0) * 1000
+            res = outcome.normalize_result(raw, action_name=name, duration_ms=dur)
+            permissions.log_action_audit(name, parameters or {}, perm_level, res.status, res.verified, res.error)
+            return res
         except Exception as e:
-            self._logger(f"Action '{name}' crashed during run(): {e}")
+            dur = (time.monotonic() - t0) * 1000
+            self._logger(f"Action '{name}' crashed during execute(): {e}")
             traceback.print_exc()
-            return f"Tool '{name}' failed: {e}"
+            res = outcome.ActionResult(
+                status=outcome.STATUS_FAILED,
+                action=name,
+                success=False,
+                verified=False,
+                message=f"Tool '{name}' failed: {e}",
+                error=str(e),
+                duration_ms=dur,
+            )
+            permissions.log_action_audit(name, parameters or {}, perm_level, res.status, res.verified, res.error)
+            return res
+
+    # -- called by main.py from _execute_tool (backward-compatible string return) --
+    def run(self, name: str, parameters: dict, ctx: dict | None = None) -> str:
+        res = self.execute(name, parameters, ctx)
+        return res.message or res.to_speech_text()
 
 
 def _call_handler(fn: Callable, parameters: dict, ctx: dict) -> str:
@@ -287,3 +375,15 @@ def discover_actions(actions_dir: Path, reserved_names: set[str] | None = None,
     registry._all_records = all_records
     logger(f"Action discovery complete: {len(valid)} active.")
     return registry
+
+
+_default_registry: Optional[ActionRegistry] = None
+
+
+def get_default_registry(actions_dir: Path | None = None) -> ActionRegistry:
+    """Return or create the authoritative shared ActionRegistry instance."""
+    global _default_registry
+    if _default_registry is None:
+        p = actions_dir or (Path(__file__).resolve().parent.parent / "actions")
+        _default_registry = discover_actions(p)
+    return _default_registry

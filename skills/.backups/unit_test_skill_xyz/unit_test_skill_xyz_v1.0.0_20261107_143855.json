@@ -1,0 +1,32 @@
+{
+  "id": "unit_test_skill_xyz",
+  "name": "Unit Test Skill",
+  "description": "Testing storage persistence",
+  "category": "user",
+  "application": "Notepad",
+  "version": "1.0.0",
+  "intent_examples": [],
+  "parameters": [],
+  "preconditions": [],
+  "steps": [
+    {
+      "step_id": 1,
+      "thought": "Type",
+      "tool": "windows_uia",
+      "parameters": {
+        "text": "hello"
+      },
+      "selector": null,
+      "verification": null,
+      "recovery": null,
+      "is_sensitive": false
+    }
+  ],
+  "tool_dependencies": [],
+  "permissions": "normal",
+  "status": "draft",
+  "created_at": "2026-11-07T14:38:55.680787",
+  "last_validated_at": null,
+  "last_used_at": null,
+  "author": "user_demonstration"
+}

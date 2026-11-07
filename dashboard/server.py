@@ -1155,6 +1155,89 @@ class DashboardServer:
                 return JSONResponse({"error": "Not found"}, status_code=404)
             return FileResponse(str(path), filename=safe)
 
+        # ══════════════════════════════════════════════════════════════════════
+        # Skill Library & Learning Endpoints
+        # ══════════════════════════════════════════════════════════════════════
+        @app.get("/api/skills")
+        async def list_skills_endpoint(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                from core.skill_learning.skill_registry import get_default_skill_registry
+                reg = get_default_skill_registry()
+                reg.reload()
+                skills = [s.to_dict() for s in reg.get_all_skills(approved_only=False)]
+                return JSONResponse({"ok": True, "skills": skills})
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        @app.get("/api/skills/learning-status")
+        async def learning_status_endpoint(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                from core.skill_learning.learning_manager import get_default_learning_manager
+                mgr = get_default_learning_manager()
+                session_data = mgr.current_session.to_dict() if mgr.current_session else None
+                return JSONResponse({
+                    "ok": True,
+                    "is_active": mgr.is_learning_active(),
+                    "session": session_data,
+                })
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        @app.get("/api/skills/{skill_id}")
+        async def get_skill_endpoint(skill_id: str, req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                from core.skill_learning.skill_registry import get_default_skill_registry
+                reg = get_default_skill_registry()
+                skill = reg.get_skill(skill_id)
+                if not skill:
+                    return JSONResponse({"error": "Skill not found"}, status_code=404)
+                return JSONResponse({"ok": True, "skill": skill.to_dict()})
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        @app.post("/api/skills/{skill_id}/approve")
+        async def approve_skill_endpoint(skill_id: str, req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                from core.skill_learning.learning_manager import get_default_learning_manager
+                mgr = get_default_learning_manager()
+                res = mgr.approve_skill(skill_id)
+                return JSONResponse(res.to_dict())
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        @app.post("/api/skills/{skill_id}/test")
+        async def test_skill_endpoint(skill_id: str, req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                body = await req.json() if req.headers.get("content-type") == "application/json" else {}
+                from core.skill_learning.learning_manager import get_default_learning_manager
+                mgr = get_default_learning_manager()
+                res = mgr.test_skill(skill_id, test_parameters=body.get("parameters", {}))
+                return JSONResponse(res.to_dict())
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        @app.delete("/api/skills/{skill_id}")
+        async def delete_skill_endpoint(skill_id: str, req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                from core.skill_learning.learning_manager import get_default_learning_manager
+                mgr = get_default_learning_manager()
+                res = mgr.delete_skill(skill_id)
+                return JSONResponse(res.to_dict())
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
         @app.websocket("/ws")
         async def ws_ep(websocket: WebSocket, token: str = ""):
             tok = token.strip()

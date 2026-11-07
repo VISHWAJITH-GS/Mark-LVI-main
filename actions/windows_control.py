@@ -193,12 +193,27 @@ if ($audio) {{
     # If audio output device, check if sounddevice sees it or can set it as default
     set_default_playback_device(target_name)
 
+    # Verify audio endpoint availability if this is an audio device
+    audio_endpoint_active = False
+    if verified:
+        try:
+            endpoints = list_audio_devices().get("playback_devices", [])
+            for ep in endpoints:
+                if target_name.lower() in str(ep.get("name", "")).lower():
+                    audio_endpoint_active = True
+                    break
+        except Exception:
+            pass
+
     return {
-        "success": verified or bool(matched),
+        "status": "done" if verified else "unverified",
+        "success": verified,
         "action": "connect_bluetooth_device",
         "device": target_name,
         "verified": verified,
-        "message": f"Connected to {target_name} successfully." if verified else f"Connection initiated for {target_name}. Verification status: {verified}.",
+        "audio_endpoint_active": audio_endpoint_active,
+        "message": f"Connected to {target_name} successfully (audio endpoint verified: {audio_endpoint_active})." if verified else f"Connection command sent for {target_name}, but active state could not be confirmed.",
+        "error": None if verified else f"Device '{target_name}' is not in active OK state.",
     }
 
 

@@ -1,4 +1,5 @@
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -10,9 +11,54 @@ def get_base_dir() -> Path:
 BASE_DIR    = get_base_dir()
 CONFIG_DIR  = BASE_DIR / "config"
 CONFIG_FILE = CONFIG_DIR / "api_keys.json"
+CONFIG_TEMPLATE = CONFIG_DIR / "api_keys.template.json"
+
+_SECRET_PATTERNS = [
+    re.compile(r"AIza[0-9A-Za-z-_]{35}"),               # Google API Key pattern
+    re.compile(r"sk-[a-zA-Z0-9]{20,}"),                 # Standard secret key prefix
+]
+
+
+def redact_secret(text: str) -> str:
+    """Redact sensitive API keys and secrets from logs and messages."""
+    if not isinstance(text, str) or not text:
+        return text
+    redacted = text
+    # 1. Redact known stored keys
+    key = get_gemini_key()
+    if key and len(key) >= 12 and key in redacted:
+        redacted = redacted.replace(key, "[REDACTED_API_KEY]")
+    # 2. Redact regex patterns
+    for pat in _SECRET_PATTERNS:
+        redacted = pat.sub("[REDACTED_SECRET]", redacted)
+    return redacted
+
+
+def scan_for_secrets(text: str) -> list[str]:
+    """Return any suspicious secret strings identified in text."""
+    if not isinstance(text, str) or not text:
+        return []
+    matches = []
+    key = get_gemini_key()
+    if key and len(key) >= 12 and key in text:
+        matches.append("Configured Gemini API key detected in text")
+    for pat in _SECRET_PATTERNS:
+        found = pat.findall(text)
+        if found:
+            matches.extend(found)
+    return matches
+
 
 def ensure_config_dir() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+def ensure_config_exists() -> None:
+    ensure_config_dir()
+    if not CONFIG_FILE.exists() and CONFIG_TEMPLATE.exists():
+        try:
+            CONFIG_FILE.write_text(CONFIG_TEMPLATE.read_text(encoding="utf-8"), encoding="utf-8")
+        except Exception:
+            pass
 
 def config_exists() -> bool:
     return CONFIG_FILE.exists()
@@ -464,10 +510,8 @@ def get_providers() -> dict:
 
 
 def get_provider_mode() -> str:
-    """Which engine holds the conversation. Defaults to Gemini Live."""
-    mode = str(get_providers().get("mode", "") or "").strip().lower()
-    return mode if mode in (PROVIDER_MODE_GEMINI, PROVIDER_MODE_PIPELINE) \
-        else PROVIDER_MODE_GEMINI
+    """Which engine holds the conversation. Strictly Google Gemini."""
+    return PROVIDER_MODE_GEMINI
 
 
 def get_provider_config(provider_id: str) -> dict:

@@ -6980,25 +6980,11 @@ class MainWindow(QMainWindow):
     # ── Engine & providers ───────────────────────────────────────────────────
 
     def _open_providers(self):
-        """Open the engine panel. Everything it needs is imported on this call.
-
-        A failure here must not take the drawer with it — the folder can be
-        deleted, which is the point of it being a folder, and the honest answer
-        to that is a line in the log rather than a traceback.
-        """
-        try:
-            ov = ProvidersOverlay(parent=self.centralWidget())
-        except ImportError:
-            self._log.append_log(
-                "SYS: The providers folder is not installed — "
-                "the assistant runs on Gemini Live.")
-            return
-        except Exception as e:
-            self._log.append_log(f"SYS: Provider settings unavailable: {e}")
-            return
-        ov.changed.connect(self._on_providers_applied)
-        self._centre_overlay(ov)
-        self._providers_overlay = ov        # keep a reference so it isn't GC'd
+        """Display engine info: Google Gemini API is the sole reasoning engine."""
+        self._log.append_log(
+            "SYS: Google Gemini API is the sole AI reasoning engine across JARVIS. "
+            "Local and third-party LLM pipelines are disabled by architecture."
+        )
 
     def _on_providers_applied(self):
         """Rebuild the session so the new engine takes over.

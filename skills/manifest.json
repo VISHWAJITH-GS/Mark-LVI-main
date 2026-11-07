@@ -1,0 +1,17 @@
+{
+  "version": "1.0.0",
+  "updated_at": "2026-11-07T14:40:20.579344",
+  "skills": {
+    "unit_test_skill_xyz": {
+      "id": "unit_test_skill_xyz",
+      "name": "Unit Test Skill",
+      "category": "user",
+      "application": "Notepad",
+      "version": "1.0.0",
+      "status": "approved",
+      "permissions": "normal",
+      "file": "skills/user_skills/unit_test_skill_xyz.json",
+      "updated_at": "2026-11-07T14:40:20.579331"
+    }
+  }
+}

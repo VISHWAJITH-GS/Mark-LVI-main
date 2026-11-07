@@ -63,17 +63,339 @@ WHY FACTS AND NOT SENTENCES
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import re
-from typing import Any
+from typing import Any, Optional
 
-# The three words a tool may answer with, plus the one that asks. Kept
-# deliberately tiny: every extra synonym is another thing a 7B model can read
-# as "fine, it worked".
+# Standard Result Contract Statuses
+STATUS_PENDING = "pending"
+STATUS_STARTED = "started"
+STATUS_DONE = "done"
+STATUS_FAILED = "failed"
+STATUS_UNVERIFIED = "unverified"
+STATUS_NEEDS_CONFIRMATION = "needs_confirmation"
+STATUS_UNSUPPORTED = "unsupported"
+
+ALLOWED_STATUSES = {
+    STATUS_PENDING,
+    STATUS_STARTED,
+    STATUS_DONE,
+    STATUS_FAILED,
+    STATUS_UNVERIFIED,
+    STATUS_NEEDS_CONFIRMATION,
+    STATUS_UNSUPPORTED,
+}
+
+# The three words a tool may answer with, plus the one that asks.
 DONE = "done"
 UNVERIFIED = "unverified"
 FAILED = "failed"
 ASK = "ask"
 STARTED = "started"
+
+
+@dataclass
+class ActionResult:
+    """Authoritative structured result contract for all JARVIS tool executions."""
+    status: str
+    action: str
+    success: bool
+    verified: bool
+    message: str = ""
+    data: dict = field(default_factory=dict)
+    error: Optional[str] = None
+    duration_ms: float = 0.0
+
+    def __post_init__(self):
+        if self.status not in ALLOWED_STATUSES:
+            if self.status in ("ask", "confirm"):
+                self.status = STATUS_NEEDS_CONFIRMATION
+            elif self.status in ("success", "ok", "completed"):
+                self.status = STATUS_DONE
+            elif self.status in ("error", "crash"):
+                self.status = STATUS_FAILED
+            else:
+                self.status = STATUS_UNSUPPORTED
+
+    def is_success(self) -> bool:
+        """Returns True if the outcome completed successfully and verified."""
+        return self.success and self.status == STATUS_DONE
+
+    @classmethod
+    def done(
+        cls,
+        action: str,
+        message: str = "Done.",
+        verified: bool = True,
+        data: Optional[dict] = None,
+        duration_ms: float = 0.0,
+    ) -> ActionResult:
+        return cls(
+            status=STATUS_DONE,
+            action=action,
+            success=True,
+            verified=verified,
+            message=message,
+            data=data or {},
+            duration_ms=duration_ms,
+        )
+
+    @classmethod
+    def failed(
+        cls,
+        action: str,
+        message: str = "",
+        error: Optional[str] = None,
+        data: Optional[dict] = None,
+        duration_ms: float = 0.0,
+    ) -> ActionResult:
+        return cls(
+            status=STATUS_FAILED,
+            action=action,
+            success=False,
+            verified=False,
+            message=message or str(error or "Action failed."),
+            error=error or message,
+            data=data or {},
+            duration_ms=duration_ms,
+        )
+
+    @classmethod
+    def unverified(
+        cls,
+        action: str,
+        message: str = "",
+        error: Optional[str] = None,
+        data: Optional[dict] = None,
+        duration_ms: float = 0.0,
+    ) -> ActionResult:
+        return cls(
+            status=STATUS_UNVERIFIED,
+            action=action,
+            success=False,
+            verified=False,
+            message=message or str(error or "Unverified outcome."),
+            error=error or message,
+            data=data or {},
+            duration_ms=duration_ms,
+        )
+
+    @classmethod
+    def needs_confirmation(
+        cls,
+        action: str,
+        message: str = "",
+        data: Optional[dict] = None,
+        duration_ms: float = 0.0,
+    ) -> ActionResult:
+        return cls(
+            status=STATUS_NEEDS_CONFIRMATION,
+            action=action,
+            success=False,
+            verified=False,
+            message=message or "Action requires confirmation.",
+            data=data or {},
+            duration_ms=duration_ms,
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "status": self.status,
+            "action": self.action,
+            "success": self.success,
+            "verified": self.verified,
+            "message": self.message,
+            "data": self.data,
+            "error": self.error,
+            "duration_ms": self.duration_ms,
+        }
+
+    def to_speech_text(self) -> str:
+        if self.message:
+            return self.message
+        if self.status == STATUS_DONE:
+            return f"Action '{self.action}' completed."
+        elif self.status == STATUS_UNVERIFIED:
+            return f"Action '{self.action}' could not be verified: {self.error or 'unconfirmed result'}."
+        elif self.status == STATUS_NEEDS_CONFIRMATION:
+            return f"Action '{self.action}' requires confirmation."
+        elif self.status == STATUS_FAILED:
+            return f"Action '{self.action}' failed: {self.error or 'unknown failure'}."
+        return f"Action '{self.action}' status is {self.status}."
+
+
+# Convenient functional constructors for ActionResult
+result_done = ActionResult.done
+result_failed = ActionResult.failed
+result_unverified = ActionResult.unverified
+result_needs_confirmation = ActionResult.needs_confirmation
+
+
+def normalize_result(raw: Any, action_name: str = "", duration_ms: float = 0.0) -> ActionResult:
+    """Normalize any raw handler output into the standard ActionResult contract."""
+    if isinstance(raw, ActionResult):
+        if duration_ms > 0 and raw.duration_ms == 0.0:
+            raw.duration_ms = duration_ms
+        if action_name and not raw.action:
+            raw.action = action_name
+        return raw
+
+    act = action_name or "unknown_action"
+
+    if isinstance(raw, dict):
+        raw_status = str(raw.get("status") or "").lower()
+        if raw_status in ("success", "ok", "done"):
+            status = STATUS_DONE
+        elif raw_status == "unverified":
+            status = STATUS_UNVERIFIED
+        elif raw_status in ("failed", "error"):
+            status = STATUS_FAILED
+        elif raw_status in ("ask", "needs_confirmation"):
+            status = STATUS_NEEDS_CONFIRMATION
+        elif raw_status in ("unsupported", "unknown"):
+            status = STATUS_UNSUPPORTED
+        elif raw_status == "started":
+            status = STATUS_STARTED
+        else:
+            status = STATUS_DONE if raw.get("success") else STATUS_FAILED
+
+        success = bool(raw.get("success", status == STATUS_DONE))
+        verified = bool(raw.get("verified", status == STATUS_DONE))
+        msg = str(raw.get("message") or raw.get("reason") or "")
+        err = raw.get("error") or (raw.get("reason") if not success else None)
+
+        data = {k: v for k, v in raw.items() if k not in ("status", "success", "verified", "message", "error")}
+        return ActionResult(
+            status=status,
+            action=str(raw.get("action") or act),
+            success=success,
+            verified=verified,
+            message=msg,
+            data=data,
+            error=str(err) if err is not None else None,
+            duration_ms=duration_ms,
+        )
+
+    if isinstance(raw, bool):
+        st = STATUS_DONE if raw else STATUS_FAILED
+        return ActionResult(
+            status=st,
+            action=act,
+            success=raw,
+            verified=raw,
+            message=f"{act} {'succeeded' if raw else 'failed'}.",
+            duration_ms=duration_ms,
+        )
+
+    raw_str = str(raw or "").strip()
+    if not raw_str:
+        return ActionResult(
+            status=STATUS_DONE,
+            action=act,
+            success=True,
+            verified=True,
+            message="Done.",
+            duration_ms=duration_ms,
+        )
+
+    if raw_str.startswith("status="):
+        m_st = re.match(r"^status=([a-z_]+)", raw_str)
+        st_name = m_st.group(1).lower() if m_st else ""
+
+        m_act = re.search(r"action=([a-zA-Z0-9_-]+)", raw_str)
+        if m_act:
+            act = m_act.group(1)
+
+        m_reason = re.search(r'reason="([^"]+)"|reason=([^\s]+)', raw_str)
+        reason_val = (m_reason.group(1) or m_reason.group(2)) if m_reason else ""
+
+        if st_name == "done":
+            return ActionResult(
+                status=STATUS_DONE,
+                action=act,
+                success=True,
+                verified=True,
+                message=raw_str,
+                data={"raw": raw_str},
+                duration_ms=duration_ms,
+            )
+        elif st_name == "unverified":
+            return ActionResult(
+                status=STATUS_UNVERIFIED,
+                action=act,
+                success=False,
+                verified=False,
+                message=reason_val or raw_str,
+                error=reason_val or "Unverified outcome",
+                data={"raw": raw_str},
+                duration_ms=duration_ms,
+            )
+        elif st_name == "failed":
+            return ActionResult(
+                status=STATUS_FAILED,
+                action=act,
+                success=False,
+                verified=False,
+                message=reason_val or raw_str,
+                error=reason_val or "Action failed",
+                data={"raw": raw_str},
+                duration_ms=duration_ms,
+            )
+        elif st_name == "ask":
+            m_q = re.search(r'question="([^"]+)"|question=([^\s]+)', raw_str)
+            q_val = (m_q.group(1) or m_q.group(2)) if m_q else reason_val
+            return ActionResult(
+                status=STATUS_NEEDS_CONFIRMATION,
+                action=act,
+                success=False,
+                verified=False,
+                message=q_val or raw_str,
+                error=None,
+                data={"question": q_val, "raw": raw_str},
+                duration_ms=duration_ms,
+            )
+        elif st_name == "started":
+            return ActionResult(
+                status=STATUS_STARTED,
+                action=act,
+                success=True,
+                verified=False,
+                message=raw_str,
+                data={"raw": raw_str},
+                duration_ms=duration_ms,
+            )
+
+    if raw_str.startswith(("Unknown action", "Unknown tool", "Action '", "Tool '")) and "not available" in raw_str:
+        return ActionResult(
+            status=STATUS_UNSUPPORTED,
+            action=act,
+            success=False,
+            verified=False,
+            message=raw_str,
+            error=raw_str,
+            duration_ms=duration_ms,
+        )
+
+    if raw_str.startswith(("Error", "Failed", "Exception", "Tool '")) and "failed" in raw_str.lower():
+        return ActionResult(
+            status=STATUS_FAILED,
+            action=act,
+            success=False,
+            verified=False,
+            message=raw_str,
+            error=raw_str,
+            duration_ms=duration_ms,
+        )
+
+    return ActionResult(
+        status=STATUS_DONE,
+        action=act,
+        success=True,
+        verified=True,
+        message=raw_str,
+        data={"output": raw_str},
+        duration_ms=duration_ms,
+    )
 
 
 def _render(value: Any) -> str:
@@ -94,7 +416,12 @@ def _line(status: str, action: str, facts: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
-def done(action: str, /, **facts: Any) -> str:
+def done(action: str, /, *args: Any, **facts: Any) -> str:
+    for a in args:
+        if isinstance(a, dict):
+            facts.update(a)
+        elif isinstance(a, str):
+            facts["detail"] = a
     """It happened and it was checked.
 
     Use this ONLY where something was observed afterwards — a process that now
@@ -106,7 +433,12 @@ def done(action: str, /, **facts: Any) -> str:
     return _line(DONE, action, facts)
 
 
-def unverified(action: str, reason: str, /, **facts: Any) -> str:
+def unverified(action: str, reason: str, /, *args: Any, **facts: Any) -> str:
+    for a in args:
+        if isinstance(a, dict):
+            facts.update(a)
+        elif isinstance(a, str):
+            facts["detail"] = a
     """It was requested; the result could not be confirmed.
 
     The instruction on the end is not decoration. Without it, a model handed
@@ -119,7 +451,12 @@ def unverified(action: str, reason: str, /, **facts: Any) -> str:
     )
 
 
-def failed(action: str, reason: str, /, **facts: Any) -> str:
+def failed(action: str, reason: str, /, *args: Any, **facts: Any) -> str:
+    for a in args:
+        if isinstance(a, dict):
+            facts.update(a)
+        elif isinstance(a, str):
+            facts["detail"] = a
     """It did not happen.
 
     `reason` is for the user, through the model, so write it as a cause a
