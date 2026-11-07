@@ -64,3 +64,4 @@ class SkillGenerator:
         )
         session.generated_skill = skill
         return skill
+

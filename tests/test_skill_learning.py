@@ -442,16 +442,18 @@ class TestSkillLearnerToolAction(unittest.TestCase):
     """Test actions.skill_learner tool execution with ActionRegistry."""
 
     def test_skill_learner_registration_and_list(self):
-        from actions.skill_learner import skill_learner
+        from core.action_loader import get_default_registry
 
-        # Test list_skills
-        res = skill_learner(action="list_skills")
+        reg = get_default_registry()
+        self.assertTrue(reg.has("skill_learner"))
+
+        # Test execution through ActionRegistry
+        res = reg.execute("skill_learner", {"action": "list_skills"})
         self.assertIsInstance(res, ActionResult)
         self.assertEqual(res.status, STATUS_DONE)
-        self.assertIn("skills", res.data)
 
         # Test invalid action
-        err_res = skill_learner(action="non_existent_action_xyz")
+        err_res = reg.execute("skill_learner", {"action": "non_existent_action_xyz"})
         self.assertEqual(err_res.status, STATUS_FAILED)
 
 

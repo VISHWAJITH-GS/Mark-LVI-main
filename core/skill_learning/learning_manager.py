@@ -114,7 +114,7 @@ class LearningManager:
         return msg
 
     def stop_learning(self, player=None) -> dict:
-        """Stop observation, retrieve recorded events, and prepare for skill generation."""
+        """Stop observation, retrieve recorded events, and automatically generate and approve skill."""
         if not self.current_session:
             return {"success": False, "message": "No active learning session to stop."}
 
@@ -123,16 +123,30 @@ class LearningManager:
         self.current_session.events = events
         self.current_session.status = "analyzing"
 
-        msg = f"Demonstration stopped. Captured {len(events)} user interaction events. Analyzing workflow..."
+        msg = f"Demonstration stopped. Captured {len(events)} user interaction events."
         if player and hasattr(player, "write_log"):
-            player.write_log(f"⏹ [LEARNING MODE] {msg}")
+            player.write_log(f"⏹ [LEARNING MODE] {msg} Generating skill...")
 
         logger.info("Session %s stopped with %d events", self.current_session.session_id, len(events))
+
+        gen_skill_id = None
+        if events:
+            try:
+                gen_res = self.generate_skill(player=player)
+                if gen_res.get("success"):
+                    gen_skill_id = gen_res.get("skill_id")
+                    # Auto-approve newly demonstrated skill
+                    self.approve_skill(gen_skill_id, player=player)
+                    msg += f" Successfully generated and approved skill '{gen_res.get('name')}' (ID: '{gen_skill_id}') with {len(gen_res.get('steps', []))} steps. Ready to test or execute!"
+            except Exception as e:
+                logger.warning("Auto skill generation failed on stop_learning: %s", e)
+
         return {
             "success": True,
-            "session_id": self.current_session.session_id,
-            "goal": self.current_session.goal,
+            "session_id": self.current_session.session_id if self.current_session else "",
+            "goal": self.current_session.goal if self.current_session else "",
             "event_count": len(events),
+            "generated_skill_id": gen_skill_id,
             "message": msg,
         }
 

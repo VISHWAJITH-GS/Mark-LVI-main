@@ -175,3 +175,4 @@ class SkillValidator:
             "risk_level": skill.permissions,
             "simulation": dry_run["substituted_steps"],
         }
+

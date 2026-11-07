@@ -81,8 +81,8 @@ class EventRecorder:
         elem_info = capture_element_at_point(x, y) or {}
         ui_state = get_current_ui_state(max_elements=10)
 
-        # Build semantic selector
-        selector = {}
+        # Build semantic selector with coordinates fallback
+        selector = {"x": x, "y": y}
         if elem_info.get("name") and elem_info.get("name") != "[PROTECTED_PASSWORD_FIELD]":
             selector["name"] = elem_info["name"]
         if elem_info.get("control_type"):
@@ -102,7 +102,7 @@ class EventRecorder:
             selector=selector,
             action=f"click_{button}",
             input_value="",
-            bounding_box=elem_info.get("bounding_rectangle"),
+            bounding_box=elem_info.get("bounding_rectangle") or {"x": x, "y": y, "width": 0, "height": 0},
         )
         self._emit_event(event)
         return event
@@ -181,7 +181,14 @@ class EventRecorder:
                 pass
 
     def _poll_desktop_state(self) -> None:
-        """Background thread polling for active window switches."""
+        """Background thread polling for mouse clicks and active window switches."""
+        import ctypes
+        from ctypes import wintypes
+
+        last_lbutton = False
+        last_click_time = 0.0
+        last_window_check = 0.0
+
         while True:
             with self._lock:
                 if not self._is_recording:
@@ -189,24 +196,42 @@ class EventRecorder:
                 paused = self._is_paused
 
             if not paused and _IS_WINDOWS:
+                now = time.time()
                 try:
-                    from actions import windows_uia
-                    if windows_uia.is_available():
-                        win = windows_uia.get_active_window()
-                        if win.get("status") == "success":
-                            title = win.get("title", "")
-                            pname = win.get("process_name", "")
-                            if (title and title != self._last_window_title) or (pname and pname != self._last_process_name):
-                                self._last_window_title = title
-                                self._last_process_name = pname
-                                evt = UIEvent(
-                                    timestamp=time.time(),
-                                    event_type="window_activate",
-                                    app_name=pname.replace(".exe", "").capitalize(),
-                                    window_title=title,
-                                    action="activate_window",
-                                )
-                                self._emit_event(evt)
+                    # 1. Detect left mouse clicks via GetAsyncKeyState
+                    lbutton_down = bool(ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000)
+                    if lbutton_down and not last_lbutton and (now - last_click_time > 0.15):
+                        last_click_time = now
+                        pt = wintypes.POINT()
+                        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+                        self.record_click(pt.x, pt.y)
+                    last_lbutton = lbutton_down
                 except Exception:
                     pass
-            time.sleep(0.4)
+
+                # 2. Check window changes periodically (~every 300ms)
+                if now - last_window_check > 0.3:
+                    last_window_check = now
+                    try:
+                        from actions import windows_uia
+                        if windows_uia.is_available():
+                            win = windows_uia.get_active_window()
+                            if win.get("status") == "success":
+                                title = win.get("title", "")
+                                pname = win.get("process_name", "")
+                                if (title and title != self._last_window_title) or (pname and pname != self._last_process_name):
+                                    self._last_window_title = title
+                                    self._last_process_name = pname
+                                    evt = UIEvent(
+                                        timestamp=now,
+                                        event_type="window_activate",
+                                        app_name=pname.replace(".exe", "").capitalize(),
+                                        window_title=title,
+                                        action="activate_window",
+                                    )
+                                    self._emit_event(evt)
+                    except Exception:
+                        pass
+
+            time.sleep(0.03)
+

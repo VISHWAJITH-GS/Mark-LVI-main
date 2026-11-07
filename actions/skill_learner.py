@@ -21,17 +21,23 @@ from core.skill_learning.skill_registry import get_default_skill_registry
 
 
 def skill_learner(
-    action: str,
-    goal: Optional[str] = None,
-    skill_id: Optional[str] = None,
     parameters: Optional[dict] = None,
     player=None,
     session_memory=None,
     **kwargs: Any,
-) -> outcome.ActionResult:
+) -> str:
     """Handle skill learning and execution actions."""
+    # Unpack parameters whether passed as dict or direct kwargs
+    p = dict(parameters or {})
+    p.update(kwargs)
+
+    action = p.get("action", "")
+    goal = p.get("goal")
+    skill_id = p.get("skill_id")
+    skill_params = p.get("parameters")
+
     manager = get_default_learning_manager()
-    act = (action or "").lower().strip()
+    act = str(action or "").lower().strip()
 
     if act in ("start_learning", "start", "learn"):
         if not goal:
@@ -82,7 +88,7 @@ def skill_learner(
                 return outcome.failed("skill_learner", "skill_id is required to test a skill.")
 
         # If parameters were passed as a JSON string, parse them
-        params_dict = parameters or {}
+        params_dict = skill_params or {}
         if isinstance(params_dict, str):
             try:
                 params_dict = json.loads(params_dict)
@@ -121,7 +127,7 @@ def skill_learner(
         if not skill_id:
             return outcome.failed("skill_learner", "skill_id is required to execute a skill.")
 
-        params_dict = parameters or {}
+        params_dict = skill_params or {}
         if isinstance(params_dict, str):
             try:
                 params_dict = json.loads(params_dict)

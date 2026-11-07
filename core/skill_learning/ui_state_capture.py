@@ -91,3 +91,4 @@ def capture_element_at_point(x: int, y: int) -> Optional[dict]:
     except Exception as e:
         print(f"[UIStateCapture] Point inspect error ({x}, {y}): {e}")
     return None
+

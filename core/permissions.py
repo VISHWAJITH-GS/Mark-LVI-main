@@ -122,3 +122,4 @@ def get_audit_trail(limit: int = 50) -> list[dict]:
 def clear_audit_trail() -> None:
     with _audit_lock:
         _audit_log.clear()
+

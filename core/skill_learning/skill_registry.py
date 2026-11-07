@@ -133,3 +133,4 @@ class SkillRegistry:
 
 def get_default_skill_registry() -> SkillRegistry:
     return SkillRegistry.get_instance()
+
