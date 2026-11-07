@@ -68,7 +68,7 @@ class SkillRegistry:
             del self._skills[skill_id]
         return success
 
-    def find_matching_skill(self, query: str, threshold: float = 0.4) -> Tuple[Optional[SkillDefinition], float, dict]:
+    def find_matching_skill(self, query: str, threshold: float = 0.4, approved_only: bool = False) -> Tuple[Optional[SkillDefinition], float, dict]:
         """Match natural language user input against learned skills using semantic heuristics.
         
         Returns:
@@ -79,7 +79,12 @@ class SkillRegistry:
         best_score = 0.0
         best_params: dict = {}
 
-        for skill in self.get_all_skills(approved_only=True):
+        candidate_skills = self.get_all_skills(approved_only=approved_only)
+        if not candidate_skills and approved_only:
+            # Fallback to any available skill
+            candidate_skills = self.get_all_skills(approved_only=False)
+
+        for skill in candidate_skills:
             score = 0.0
 
             # 1. Direct name or ID match

@@ -1,0 +1,47 @@
+{
+  "site_url": "http://127.0.0.1:52332/index.html",
+  "framework": "Static HTML/Web Application",
+  "start_time": "2026-11-07T16:50:10.044732",
+  "end_time": "2026-11-07T16:50:18.311941",
+  "total_tests": 3,
+  "passed_tests": 3,
+  "failed_tests": 0,
+  "console_errors": [
+    {
+      "msg_type": "error",
+      "text": "Failed to load resource: the server responded with a status of 404 (File not found)",
+      "location": "{'url': 'http://127.0.0.1:52332/favicon.ico', 'line': 0, 'column': 0, 'lineNumber': 0, 'columnNumber': 0}",
+      "timestamp": 1794050411.1433432
+    }
+  ],
+  "network_errors": [],
+  "results": [
+    {
+      "test_name": "Verify Page Load and Content",
+      "passed": true,
+      "duration_ms": 104.21252250671387,
+      "steps_executed": 4,
+      "error": null,
+      "screenshot_path": "reports\\qa_shot_20261107_165017_1.png",
+      "details": {}
+    },
+    {
+      "test_name": "Primary Action Button Click",
+      "passed": true,
+      "duration_ms": 488.42573165893555,
+      "steps_executed": 2,
+      "error": null,
+      "screenshot_path": "reports\\qa_shot_20261107_165017_2.png",
+      "details": {}
+    },
+    {
+      "test_name": "Navigation Link Integrity",
+      "passed": true,
+      "duration_ms": 540.0741100311279,
+      "steps_executed": 3,
+      "error": null,
+      "screenshot_path": "reports\\qa_shot_20261107_165017_3.png",
+      "details": {}
+    }
+  ]
+}

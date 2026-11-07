@@ -139,6 +139,8 @@
     <div class="pill" id="pill"><span class="dot"></span><span id="st">Connecting</span></div>
     <div class="enc-badge" id="enc">AES-GCM</div>
     <button class="pill" id="skills-btn" onclick="toggleSkillsModal()" style="cursor:pointer;border-color:var(--accent);color:var(--accent);margin-left:6px;">SKILLS</button>
+    <button class="pill" id="desktop-btn" onclick="toggleDesktopModal()" style="cursor:pointer;border-color:#38bdf8;color:#38bdf8;margin-left:6px;">DESKTOP & QA</button>
+    <button class="pill" id="stop-btn" onclick="triggerEmergencyStop()" style="cursor:pointer;border-color:#ef4444;color:#ef4444;margin-left:6px;font-weight:bold;">🛑 STOP</button>
     <div class="spacer"></div>
     <div class="url">__IP__:__PORT__</div>
   </header>
@@ -166,6 +168,62 @@
       <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);padding-top:12px;">
         <button class="btn" onclick="loadSkills()" style="background:var(--surface);border:1px solid var(--border);color:var(--text);">↻ Refresh</button>
         <button class="btn btn-send" onclick="toggleSkillsModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DESKTOP & QA MODAL ── -->
+  <div id="desktop-modal" style="display:none;position:fixed;inset:0;background:rgba(7,9,15,0.85);backdrop-filter:blur(8px);z-index:100;padding:20px;overflow-y:auto;align-items:center;justify-content:center;">
+    <div style="background:#0c0f1d;border:1px solid var(--border);border-radius:16px;max-width:800px;width:100%;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,0.6);display:flex;flex-direction:column;gap:16px;margin:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <h2 style="font-size:16px;letter-spacing:1px;font-weight:700;color:#38bdf8;">Desktop Perception & Autonomous Browser QA</h2>
+          <span id="automation-status-badge" style="font-size:10px;padding:3px 8px;border-radius:99px;background:rgba(34,197,94,0.2);color:#22c55e;border:1px solid rgba(34,197,94,0.4);font-weight:700;">READY</span>
+        </div>
+        <button onclick="toggleDesktopModal()" style="background:transparent;border:none;color:var(--muted);font-size:18px;cursor:pointer;">✕</button>
+      </div>
+
+      <!-- Live Desktop State -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;font-size:12px;">
+          <h3 style="font-size:13px;color:var(--muted);margin-top:0;margin-bottom:8px;">Active Window & Cursor</h3>
+          <div>Title: <strong id="desk-title" style="color:#f8fafc;">-</strong></div>
+          <div>Process: <strong id="desk-proc">-</strong></div>
+          <div>Cursor: <strong id="desk-cursor">(0, 0)</strong></div>
+          <div>Monitors: <strong id="desk-monitors">-</strong></div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;font-size:12px;">
+          <h3 style="font-size:13px;color:var(--muted);margin-top:0;margin-bottom:8px;">Browser Testing Session</h3>
+          <div>Status: <strong id="br-status" style="color:#38bdf8;">Idle</strong></div>
+          <div>URL: <strong id="br-url" style="word-break:break-all;">about:blank</strong></div>
+          <div>Errors: <span id="br-errors" style="color:#f87171;">0 console / 0 network</span></div>
+        </div>
+      </div>
+
+      <!-- Screenshot Preview -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <h3 style="font-size:13px;color:var(--muted);margin:0;">Live Desktop Preview</h3>
+          <button class="btn" onclick="refreshScreenshot()" style="padding:4px 10px;font-size:10px;background:rgba(56,189,248,0.15);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);">↻ Refresh Screenshot</button>
+        </div>
+        <img id="desk-preview-img" style="width:100%;max-height:260px;object-fit:contain;border-radius:6px;border:1px solid #1e293b;background:#000;" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='50'%3E%3Ctext x='50%25' y='50%25' fill='%23666' text-anchor='middle'%3ENo Preview%3C/text%3E%3C/svg%3E" />
+      </div>
+
+      <!-- Autonomous Website QA Controls -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;">
+        <h3 style="font-size:13px;color:var(--muted);margin-top:0;margin-bottom:8px;">Autonomous Website QA Runner</h3>
+        <div style="display:flex;gap:8px;">
+          <input id="qa-target-url" placeholder="http://localhost:3000" style="flex:1;padding:8px 12px;background:#07090f;border:1px solid var(--border);border-radius:8px;color:#fff;font-size:13px;" />
+          <button class="btn" onclick="runAutonomousQA()" style="background:#38bdf8;color:#0f172a;font-weight:bold;">▶ Run QA</button>
+        </div>
+        <div id="qa-reports-list" style="margin-top:12px;display:flex;flex-direction:column;gap:6px;max-height:160px;overflow-y:auto;">
+          <div style="color:var(--muted);font-size:12px;">No QA reports available yet.</div>
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border);padding-top:12px;">
+        <button class="btn" onclick="triggerEmergencyStop()" style="background:rgba(239,68,68,0.2);border:1px solid rgba(239,68,68,0.4);color:#ef4444;font-weight:bold;">🛑 Emergency Stop</button>
+        <button class="btn btn-send" onclick="toggleDesktopModal()">Close</button>
       </div>
     </div>
   </div>
@@ -742,6 +800,121 @@
         }
       } catch (err) {
         toast('Delete error: ' + err.message);
+      }
+    }
+
+    // ── Desktop & Browser QA Modal JS ──
+    let _desktopModalOpen = false;
+    let _desktopPollTimer = null;
+
+    function toggleDesktopModal() {
+      const modal = document.getElementById('desktop-modal');
+      _desktopModalOpen = !_desktopModalOpen;
+      modal.style.display = _desktopModalOpen ? 'flex' : 'none';
+      if (_desktopModalOpen) {
+        loadDesktopData();
+        refreshScreenshot();
+        loadQAReports();
+        _desktopPollTimer = setInterval(loadDesktopData, 3000);
+      } else if (_desktopPollTimer) {
+        clearInterval(_desktopPollTimer);
+        _desktopPollTimer = null;
+      }
+    }
+
+    async function loadDesktopData() {
+      try {
+        const [pRes, bRes] = await Promise.all([
+          _authFetch('/api/desktop/perception'),
+          _authFetch('/api/browser/status')
+        ]);
+        const pData = await pRes.json();
+        const bData = await bRes.json();
+
+        if (pData.ok) {
+          document.getElementById('desk-title').textContent = pData.active_window?.title || '(None)';
+          document.getElementById('desk-proc').textContent = pData.active_window?.process_name || '-';
+          document.getElementById('desk-cursor').textContent = `(${pData.cursor?.x}, ${pData.cursor?.y})`;
+          document.getElementById('desk-monitors').textContent = `${(pData.monitors || []).length} connected`;
+        }
+        if (bData.ok) {
+          document.getElementById('br-status').textContent = bData.is_connected ? 'Active Session' : 'Idle';
+          document.getElementById('br-url').textContent = bData.active_url || 'about:blank';
+          document.getElementById('br-errors').textContent = `${bData.console_errors || 0} console / ${bData.network_errors || 0} network`;
+        }
+      } catch (e) {}
+    }
+
+    async function refreshScreenshot() {
+      try {
+        const res = await _authFetch('/api/desktop/screenshot');
+        if (res.ok) {
+          const blob = await res.blob();
+          document.getElementById('desk-preview-img').src = URL.createObjectURL(blob);
+        }
+      } catch (e) {}
+    }
+
+    async function loadQAReports() {
+      try {
+        const res = await _authFetch('/api/browser/qa-reports');
+        const data = await res.json();
+        const container = document.getElementById('qa-reports-list');
+        if (data.ok && data.reports && data.reports.length > 0) {
+          container.innerHTML = data.reports.map(r => `
+            <div style="background:#07090f;border:1px solid var(--border);border-radius:6px;padding:8px;display:flex;justify-content:space-between;align-items:center;font-size:12px;">
+              <div>
+                <strong>${esc(r.site_url)}</strong>
+                <span style="color:var(--muted);margin-left:8px;">${(r.start_time || '').slice(0, 19).replace('T', ' ')}</span>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <span style="color:#10b981;font-weight:bold;">${r.passed_tests} PASS</span>
+                ${r.failed_tests > 0 ? `<span style="color:#ef4444;font-weight:bold;">${r.failed_tests} FAIL</span>` : ''}
+              </div>
+            </div>
+          `).join('');
+        } else {
+          container.innerHTML = '<div style="color:var(--muted);font-size:12px;">No QA reports available yet.</div>';
+        }
+      } catch (e) {}
+    }
+
+    async function runAutonomousQA() {
+      const urlInput = document.getElementById('qa-target-url');
+      const url = urlInput.value.trim() || 'http://localhost:3000';
+      toast(`Starting Autonomous QA on ${url}...`);
+      try {
+        const res = await _authFetch('/api/browser/run-qa', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          toast(`QA Complete: ${data.passed_tests}/${data.total_tests} passed.`);
+          loadQAReports();
+        } else {
+          toast(`QA Failed: ${data.error}`);
+        }
+      } catch (e) {
+        toast(`Error running QA: ${e.message}`);
+      }
+    }
+
+    async function triggerEmergencyStop() {
+      try {
+        const res = await _authFetch('/api/desktop/emergency-stop', { method: 'POST' });
+        const data = await res.json();
+        toast('🛑 EMERGENCY STOP ACTIVATED!');
+        const badge = document.getElementById('automation-status-badge');
+        if (badge) {
+          badge.textContent = 'STOPPED';
+          badge.style.background = 'rgba(239,68,68,0.2)';
+          badge.style.color = '#ef4444';
+          badge.style.borderColor = 'rgba(239,68,68,0.4)';
+        }
+      } catch (e) {
+        toast('Emergency stop failed: ' + e.message);
       }
     }
   </script>

@@ -1238,6 +1238,117 @@ class DashboardServer:
             except Exception as e:
                 return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
+        # ══════════════════════════════════════════════════════════════════════
+        # Desktop Perception & Emergency Stop Endpoints
+        # ══════════════════════════════════════════════════════════════════════
+        @app.get("/api/desktop/perception")
+        async def desktop_perception_endpoint(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                from actions.screen_observer import get_screen_observer
+                obs = get_screen_observer().capture_observation(trigger_reason="dashboard_poll", capture_images=False)
+                return JSONResponse({
+                    "ok": True,
+                    "active_window": obs.active_window,
+                    "monitors": obs.monitors,
+                    "cursor": {"x": obs.cursor_position[0], "y": obs.cursor_position[1]},
+                    "browser_url": obs.browser_url,
+                    "elements": obs.visible_elements[:30],
+                })
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        @app.get("/api/desktop/screenshot")
+        async def desktop_screenshot_endpoint(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                from actions.display_manager import get_display_manager
+                from fastapi.responses import Response
+                dm = get_display_manager()
+                shot = dm.capture_screenshot(monitor_index=0)
+                preview = dm.generate_preview(shot, max_width=960, max_height=540)
+                return Response(content=preview.image_bytes, media_type="image/jpeg")
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        @app.post("/api/desktop/emergency-stop")
+        async def emergency_stop_endpoint(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                from core.agent_orchestrator import get_orchestrator
+                orch = get_orchestrator()
+                orch.emergency_stop()
+                return JSONResponse({"ok": True, "message": "Emergency stop triggered successfully."})
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        # ══════════════════════════════════════════════════════════════════════
+        # Browser Session & QA Endpoints
+        # ══════════════════════════════════════════════════════════════════════
+        @app.get("/api/browser/status")
+        async def browser_status_endpoint(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                from actions.browser_session_manager import get_browser_session_manager
+                bm = get_browser_session_manager()
+                st = bm.get_session_state()
+                return JSONResponse({
+                    "ok": True,
+                    "browser_type": st.browser_type,
+                    "is_connected": st.is_connected,
+                    "active_url": st.active_url,
+                    "tab_count": st.tab_count,
+                    "console_errors": st.console_errors_count,
+                    "network_errors": st.network_errors_count,
+                })
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        @app.get("/api/browser/qa-reports")
+        async def list_qa_reports_endpoint(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                rep_dir = Path("reports")
+                reports = []
+                if rep_dir.exists():
+                    for f in sorted(rep_dir.glob("qa_report_*.json"), reverse=True):
+                        try:
+                            data = json.loads(f.read_text(encoding="utf-8"))
+                            data["filename"] = f.name
+                            data["html_filename"] = f.name.replace(".json", ".html")
+                            reports.append(data)
+                        except Exception:
+                            pass
+                return JSONResponse({"ok": True, "reports": reports[:15]})
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+        @app.post("/api/browser/run-qa")
+        async def run_browser_qa_endpoint(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                body = await req.json() if req.headers.get("content-type") == "application/json" else {}
+                url = body.get("url") or "http://localhost:3000"
+                from actions.browser_qa_agent import get_browser_qa_agent
+                agent = get_browser_qa_agent()
+                rep = agent.execute_test_suite(url=url, project_dir=body.get("project_dir"))
+                return JSONResponse({
+                    "ok": True,
+                    "site_url": rep.site_url,
+                    "total_tests": rep.total_tests,
+                    "passed_tests": rep.passed_tests,
+                    "failed_tests": rep.failed_tests,
+                    "html_report": rep.report_html_path,
+                })
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
         @app.websocket("/ws")
         async def ws_ep(websocket: WebSocket, token: str = ""):
             tok = token.strip()

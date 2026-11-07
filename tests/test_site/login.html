@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>MARK LVI Test Portal — Login</title>
+  <style>
+    body { font-family: sans-serif; background: #121826; color: #fff; padding: 30px; }
+    nav a { color: #38bdf8; margin-right: 15px; text-decoration: none; font-weight: bold; }
+    .card { background: #1e293b; padding: 20px; border-radius: 8px; margin-top: 20px; max-width: 400px; }
+    .form-group { margin-bottom: 15px; }
+    label { display: block; margin-bottom: 5px; font-weight: bold; }
+    input { width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #334155; background: #0f172a; color: #fff; box-sizing: border-box; }
+    button { background: #38bdf8; color: #000; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; }
+    #login-status { margin-top: 15px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="about.html">About</a>
+    <a href="login.html">Login Portal</a>
+  </nav>
+
+  <div class="card">
+    <h2>Student / User Login</h2>
+    <form id="login-form" onsubmit="event.preventDefault(); handleLogin();">
+      <div class="form-group">
+        <label for="email-field">Email Address</label>
+        <input id="email-field" name="email" type="email" placeholder="Enter your email" required />
+      </div>
+      <div class="form-group">
+        <label for="password-field">Password</label>
+        <input id="password-field" name="password" type="password" placeholder="Enter test password" required />
+      </div>
+      <button id="submit-login-btn" type="submit">Log In</button>
+    </form>
+    <div id="login-status"></div>
+  </div>
+
+  <script>
+    function handleLogin() {
+      const email = document.getElementById('email-field').value;
+      const status = document.getElementById('login-status');
+      if (email.includes('@')) {
+        status.style.color = '#22c55e';
+        status.innerText = 'Welcome Dashboard: Authentication Successful!';
+      } else {
+        status.style.color = '#ef4444';
+        status.innerText = 'Error: Invalid email format.';
+      }
+    }
+  </script>
+</body>
+</html>
+

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>MARK LVI Test Portal — Home</title>
+  <style>
+    body { font-family: sans-serif; background: #121826; color: #fff; padding: 30px; }
+    nav a { color: #38bdf8; margin-right: 15px; text-decoration: none; font-weight: bold; }
+    .card { background: #1e293b; padding: 20px; border-radius: 8px; margin-top: 20px; }
+    button { background: #38bdf8; color: #000; border: none; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+    #status-msg { margin-top: 15px; color: #22c55e; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="about.html">About</a>
+    <a href="login.html">Login Portal</a>
+  </nav>
+
+  <div class="card">
+    <h1>MARK LVI Autonomous QA Verification Site</h1>
+    <p>This local site verifies full autonomous browser testing, DOM inspection, semantic selectors, and reporting.</p>
+    <button id="primary-action-btn" onclick="document.getElementById('status-msg').innerText = 'Primary Action Successfully Verified!'">Click Me</button>
+    <div id="status-msg">Waiting for interaction</div>
+  </div>
+</body>
+</html>
+

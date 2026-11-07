@@ -1,0 +1,46 @@
+{
+  "site_url": "http://127.0.0.1:51622/index.html",
+  "framework": "Static HTML/Web Application",
+  "start_time": "2026-11-07T16:55:18.069262",
+  "end_time": "2026-11-07T16:56:32.757324",
+  "total_tests": 2,
+  "passed_tests": 1,
+  "failed_tests": 1,
+  "console_errors": [
+    {
+      "msg_type": "error",
+      "text": "Failed to load resource: the server responded with a status of 404 (File not found)",
+      "location": "{'url': 'http://127.0.0.1:51622/favicon.ico', 'line': 0, 'column': 0, 'lineNumber': 0, 'columnNumber': 0}",
+      "timestamp": 1794050718.1460617
+    }
+  ],
+  "network_errors": [
+    {
+      "url": "http://invalid.domain.that.does.not.exist.test:9999/",
+      "method": "GET",
+      "status": null,
+      "error_text": "net::ERR_NAME_NOT_RESOLVED",
+      "timestamp": 1794050717.6045392
+    }
+  ],
+  "results": [
+    {
+      "test_name": "Page Structure & Title Verification",
+      "passed": true,
+      "duration_ms": 122.2081184387207,
+      "steps_executed": 1,
+      "error": null,
+      "screenshot_path": "reports\\qa_shot_20261107_165632_1.png",
+      "details": {}
+    },
+    {
+      "test_name": "Button Interaction Check (Click Me)",
+      "passed": false,
+      "duration_ms": 478.8832664489746,
+      "steps_executed": 1,
+      "error": "Assertion failed: expected 'body' not found on page.",
+      "screenshot_path": "reports\\qa_shot_20261107_165632_2.png",
+      "details": {}
+    }
+  ]
+}

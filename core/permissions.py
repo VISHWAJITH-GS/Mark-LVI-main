@@ -47,6 +47,8 @@ ACTION_PERMISSIONS: dict[str, str] = {
     "save_memory": NORMAL,
     "undo": NORMAL,
     "takeover_desktop": NORMAL,
+    "computer_use": NORMAL,
+    "browser_qa": NORMAL,
 
     # Sensitive tools
     "computer_control": SENSITIVE,
