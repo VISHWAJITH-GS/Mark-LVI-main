@@ -99,6 +99,7 @@ def save_skill(skill: SkillDefinition) -> Path:
     }
     manifest["updated_at"] = datetime.now().isoformat()
     _write_manifest(manifest)
+    print(f"[Storage] Skill saved: {skill.id}")
     return file_path
 
 

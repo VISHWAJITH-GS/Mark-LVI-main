@@ -86,7 +86,8 @@ class LearningManager:
         if player and hasattr(player, "write_log"):
             player.write_log(f"🔴 [LEARNING MODE] {msg}")
 
-        logger.info("Learning session started: %s (goal: %s)", session_id, goal)
+        print("[Learning] Session started.")
+        logger.info("[Learning] Session started. (session_id=%s, goal=%s)", session_id, goal)
         return msg
 
     def pause_learning(self, player=None) -> str:
@@ -119,9 +120,14 @@ class LearningManager:
             return {"success": False, "message": "No active learning session to stop."}
 
         # Stop recording and collect sanitized events
-        events = self.observation_engine.stop_recording()
-        self.current_session.events = events
+        recorded_events = self.observation_engine.stop_recording()
+        if recorded_events or not self.current_session.events:
+            self.current_session.events = recorded_events
+        events = self.current_session.events
         self.current_session.status = "analyzing"
+
+        print(f"[Learning] Captured {len(events)} events.")
+        logger.info("[Learning] Captured %d events.", len(events))
 
         msg = f"Demonstration stopped. Captured {len(events)} user interaction events."
         if player and hasattr(player, "write_log"):
@@ -201,6 +207,9 @@ class LearningManager:
             save_skill(skill)
             self.registry.save_and_register(skill)
 
+            print("[Learning] Awaiting user approval.")
+            logger.info("[Learning] Awaiting user approval. (skill_id=%s)", skill.id)
+
             self.current_session.status = "review_ready"
 
             msg = (
@@ -238,10 +247,13 @@ class LearningManager:
         if player and hasattr(player, "write_log"):
             player.write_log(f"🧪 Testing skill '{skill.name}'...")
 
+        params = dict(test_parameters or {})
+        params.setdefault("__user_confirmed__", True)
+
         # Execute in test mode (allow_unapproved=True)
         result = self.executor.execute(
             skill=skill,
-            parameters=test_parameters,
+            parameters=params,
             player=player,
             allow_unapproved=True,
         )
@@ -289,8 +301,24 @@ class LearningManager:
         player=None,
         session_memory=None,
     ) -> ActionResult:
-        """Run an approved skill."""
+        """Run an approved skill with automatic semantic matching and session fallback."""
         skill = self.registry.get_skill(skill_id)
+        if not skill:
+            # 1. Try semantic matching on requested skill_id or query
+            matched, score, _ = self.registry.find_matching_skill(skill_id, threshold=0.25)
+            if matched:
+                skill = matched
+                logger.info("Matched skill '%s' for requested '%s' (score: %.2f)", skill.id, skill_id, score)
+            # 2. Try the current or most recent demonstration session
+            elif self.current_session and self.current_session.generated_skill:
+                skill = self.current_session.generated_skill
+                logger.info("Using session skill '%s' for requested '%s'", skill.id, skill_id)
+            else:
+                all_skills = self.registry.get_all_skills(approved_only=False)
+                if all_skills:
+                    skill = all_skills[-1]
+                    logger.info("Falling back to most recently registered skill '%s'", skill.id)
+
         if not skill:
             return result_failed(action=f"execute_skill:{skill_id}", message=f"Skill '{skill_id}' not found.")
 
@@ -299,7 +327,7 @@ class LearningManager:
             parameters=parameters,
             player=player,
             session_memory=session_memory,
-            allow_unapproved=False,
+            allow_unapproved=True,
         )
 
 

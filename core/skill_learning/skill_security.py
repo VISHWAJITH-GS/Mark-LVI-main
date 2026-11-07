@@ -31,6 +31,40 @@ _SENSITIVE_ACTIONS = {
 
 SENSITIVE_INPUT_PLACEHOLDER = "[REDACTED_SENSITIVE_CREDENTIAL]"
 
+_CREDENTIAL_PATTERNS = [
+    re.compile(r"(password\s*(?:is|for|:|are|=)?\s*)([^\s,.]+)", re.IGNORECASE),
+    re.compile(r"(pass\s*(?:is|for|:|are|=)?\s*)([^\s,.]+)", re.IGNORECASE),
+    re.compile(r"(credentials?\s*(?:are|is|:|for)?\s*)([^\s,.]+)", re.IGNORECASE),
+    re.compile(r"(login\s*id\s*(?:is|:|are)?\s*)([^\s,.]+)", re.IGNORECASE),
+    re.compile(r"(\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+\b)"),
+    re.compile(r"(\b\d{10,}@\w+\b)"),  # Student register number / university handle
+]
+
+
+def sanitize_text_and_credentials(text: str) -> str:
+    """Scrub passwords, tokens, and private credentials from text before persistence or model analysis."""
+    if not text:
+        return ""
+    result = str(text)
+
+    # 1. Scrub student register numbers / institutional handles first
+    result = re.sub(r"(\b\d{10,}@\w+\b)", r"[REDACTED_USER]", result)
+
+    # 2. Scrub passwords, secrets, credentials in a single pass with word boundaries
+    result = re.sub(
+        r"\b(password|pass|pwd|credentials?|login\s*id|secret|token)\s*(?:is|for|:|are|=)?\s*([^\s,.]+)",
+        r"\1 [REDACTED_CREDENTIAL]",
+        result,
+        flags=re.IGNORECASE,
+    )
+
+    try:
+        from memory.config_manager import redact_secret
+        result = redact_secret(result)
+    except Exception:
+        pass
+    return result
+
 
 def is_sensitive_control(control_info: dict) -> bool:
     """Check if a UI control is a password, secret, or credential field."""

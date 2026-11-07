@@ -165,6 +165,8 @@ class SkillValidator:
         warnings.extend(dry_run["warnings"])
 
         overall_valid = is_valid and dry_run["success"]
+        print("[Validator] Skill validation completed.")
+        logger.info("[Validator] Skill validation completed. (valid: %s)", overall_valid)
 
         return {
             "valid": overall_valid,

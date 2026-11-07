@@ -124,8 +124,16 @@ def skill_learner(
         return outcome.done("skill_learner", message=msg, data={"skills": summaries})
 
     elif act in ("execute_skill", "run_skill", "execute"):
-        if not skill_id:
-            return outcome.failed("skill_learner", "skill_id is required to execute a skill.")
+        target_id = skill_id or p.get("goal")
+        if not target_id:
+            if manager.current_session and manager.current_session.generated_skill:
+                target_id = manager.current_session.generated_skill.id
+            else:
+                all_s = manager.registry.get_all_skills(approved_only=False)
+                if all_s:
+                    target_id = all_s[-1].id
+                else:
+                    return outcome.failed("skill_learner", "No skill ID provided and no skills exist in library.")
 
         params_dict = skill_params or {}
         if isinstance(params_dict, str):
@@ -135,7 +143,7 @@ def skill_learner(
                 params_dict = {}
 
         return manager.execute_skill(
-            skill_id=skill_id,
+            skill_id=target_id,
             parameters=params_dict,
             player=player,
             session_memory=session_memory,

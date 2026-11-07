@@ -174,6 +174,23 @@ class EventRecorder:
     def _emit_event(self, event: UIEvent) -> None:
         with self._lock:
             self._events.append(event)
+
+        # Diagnostic logging matching requirement H
+        evt_kind = event.event_type
+        if evt_kind in ("click", "double_click"):
+            el_lower = (event.element_name or "").lower()
+            if "profile" in el_lower or "student" in el_lower or "user" in el_lower or "@" in el_lower:
+                evt_kind = "profile_selected"
+            else:
+                evt_kind = "button_clicked"
+        elif evt_kind == "window_activate":
+            if any(b in event.app_name.lower() for b in ("chrome", "msedge", "edge", "firefox", "browser")):
+                evt_kind = "browser_navigation"
+            else:
+                evt_kind = "window_activated"
+
+        print(f"[Observation] Event captured: {evt_kind}")
+
         if self.on_event_cb:
             try:
                 self.on_event_cb(event)

@@ -376,7 +376,23 @@ def normalize_result(raw: Any, action_name: str = "", duration_ms: float = 0.0) 
             duration_ms=duration_ms,
         )
 
-    if raw_str.startswith(("Error", "Failed", "Exception", "Tool '")) and "failed" in raw_str.lower():
+    lower_raw = raw_str.lower()
+    is_explicit_error = (
+        raw_str.startswith(("Error", "Failed", "Exception", "Tool '", "Browser error", "Type error", "Locator.", "Target page"))
+        or "error:" in lower_raw
+        or "browser error" in lower_raw
+        or "type error" in lower_raw
+        or "timed out" in lower_raw
+        or "timeout" in lower_raw
+        or "target page, context or browser has been closed" in lower_raw
+        or "target page" in lower_raw
+        or "exception" in lower_raw
+        or "could not find" in lower_raw
+        or "element not found" in lower_raw
+        or "failed" in lower_raw
+        or "refusing" in lower_raw
+    )
+    if is_explicit_error and not any(ok in lower_raw for ok in ("no error", "0 errors", "without error")):
         return ActionResult(
             status=STATUS_FAILED,
             action=act,

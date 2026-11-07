@@ -49,7 +49,8 @@ class SkillGenerator:
         )
 
         skill = self.builder.build_skill_definition(analysis, author=author)
-        logger.info("Generated skill '%s' (ID: %s) with %d steps", skill.name, skill.id, len(skill.steps))
+        print("[Generator] Skill generated.")
+        logger.info("[Generator] Skill generated. (ID: %s, steps: %d)", skill.id, len(skill.steps))
         return skill
 
     def generate_from_session(self, session: LearningSession) -> SkillDefinition:

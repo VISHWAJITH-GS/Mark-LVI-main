@@ -1134,9 +1134,11 @@ def browser_control(
                 else:
                     result = sess.run(sess.go_to(params.get("url", "")))
             except concurrent.futures.TimeoutError:
-                result = f"Browser action '{action}' timed out (60s)."
+                result = outcome.failed("browser_control", f"Browser action '{action}' timed out (60s).")
             except Exception as e:
-                result = f"Browser error ({action}): {e}"
+                if "closed" in str(e).lower():
+                    _registry.close_one(browser)
+                result = outcome.failed("browser_control", f"Browser error ({action}): {e}")
             _log(player, result)
             return result
 
@@ -1245,12 +1247,14 @@ def browser_control(
         elif action == "reload":
             result = sess.run(sess.reload())
         else:
-            result = f"Unknown browser action: '{action}'"
+            result = outcome.failed("browser_control", f"Unknown browser action: '{action}'")
 
     except concurrent.futures.TimeoutError:
-        result = f"Browser action '{action}' timed out (60s)."
+        result = outcome.failed("browser_control", f"Browser action '{action}' timed out (60s).")
     except Exception as e:
-        result = f"Browser error ({action}): {e}"
+        if "closed" in str(e).lower():
+            _registry.close_one(browser)
+        result = outcome.failed("browser_control", f"Browser error ({action}): {e}")
 
     _log(player, result)
     return result

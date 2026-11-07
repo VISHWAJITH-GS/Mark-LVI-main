@@ -268,6 +268,16 @@ Example:
                 name = params.get("name", "")
                 ctype = params.get("control_type")
                 raw_res = windows_uia.click_element(name=name, control_type=ctype)
+                if isinstance(raw_res, dict) and raw_res.get("status") != "done":
+                    x = params.get("x")
+                    y = params.get("y")
+                    if x is not None and y is not None:
+                        from actions import computer_control
+                        raw_res = computer_control.computer_control({"action": "click", "x": x, "y": y})
+                    elif ctype and name:
+                        retry_res = windows_uia.click_element(name=name)
+                        if isinstance(retry_res, dict) and retry_res.get("status") == "done":
+                            raw_res = retry_res
                 act_res = outcome.normalize_result(raw_res, action_name="click_element")
             elif action == "type_text":
                 from actions import windows_uia
@@ -332,7 +342,13 @@ Example:
         is_ok = bool(act_res.status == outcome.STATUS_DONE and act_res.success and act_res.verified)
         result_desc = act_res.message or act_res.to_speech_text()
 
-        if act_res.status == outcome.STATUS_UNVERIFIED:
+        if act_res.status == outcome.STATUS_STARTED:
+            # Application launch is in progress; allow brief pause for window/process initialization
+            time.sleep(1.8)
+            is_ok = True
+            result_desc = f"[STARTED] {act_res.action} launched: {act_res.message}"
+
+        elif act_res.status == outcome.STATUS_UNVERIFIED:
             is_ok = False
             result_desc = f"[UNVERIFIED] {result_desc}"
 
@@ -446,6 +462,35 @@ Example:
                                         break
                                     except Exception as ex:
                                         self.log(f"Recovery launch failed: {ex}")
+
+                elif action in ("click_element", "uia_click", "click"):
+                    params = current.get("parameters", {})
+                    target = params.get("target") or params.get("name") or params.get("element_or_name") or ""
+                    x = params.get("x")
+                    y = params.get("y")
+
+                    # Check if target is a browser profile or profile chooser
+                    try:
+                        from actions import browser_profile
+                        prof_res = browser_profile.browser_profile({"action": "select_profile", "profile_name": target, "x": x, "y": y})
+                        if "selected" in str(prof_res).lower() or "done" in str(prof_res).lower():
+                            recovered = True
+                            time.sleep(1.0)
+                            results_log[-1] += f" [Recovered via browser profile selection '{target}']"
+                    except Exception as ex:
+                        self.log(f"Profile recovery failed: {ex}")
+
+                    if not recovered and x is not None and y is not None:
+                        try:
+                            from actions import computer_control
+                            self.log(f"Recovering click on '{target}' via coordinates ({x}, {y})...")
+                            res = computer_control.computer_control({"action": "click", "x": int(x), "y": int(y)})
+                            if "clicked" in str(res).lower() or "done" in str(res).lower():
+                                recovered = True
+                                time.sleep(1.0)
+                                results_log[-1] += f" [Recovered via coordinate click ({x}, {y})]"
+                        except Exception as ex:
+                            self.log(f"Coordinate recovery failed: {ex}")
 
                 if not recovered:
                     self.log(f"Prerequisite step {step_idx + 1} failed and could not be recovered. Stopping plan safely.")

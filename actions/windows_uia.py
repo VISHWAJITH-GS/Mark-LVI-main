@@ -511,17 +511,19 @@ def find_elements(
             if active.get("status") == "success":
                 target_wrapper = active.get("wrapper")
             if target_wrapper is None:
-                # Look for Edge or Explorer
-                target_wrapper = _get_edge_window() or _get_file_explorer_window()
+                # Look for Chrome, Edge or Explorer
+                target_wrapper = _get_chrome_window() or _get_edge_window() or _get_file_explorer_window()
 
         target_name = (name or "").strip()
         target_name_lower = target_name.lower()
 
         if target_wrapper is None:
-            if "edge" in target_name_lower or "tab" in target_name_lower or "browser" in target_name_lower:
+            if "chrome" in target_name_lower:
+                target_wrapper = _get_chrome_window()
+            elif "edge" in target_name_lower or "tab" in target_name_lower or "browser" in target_name_lower:
                 target_wrapper = _get_edge_window()
             if target_wrapper is None:
-                target_wrapper = _get_file_explorer_window()
+                target_wrapper = _get_chrome_window() or _get_file_explorer_window()
 
         if target_wrapper is None:
             return {"status": "failed", "reason": "No target window to search."}
@@ -571,7 +573,7 @@ def find_elements(
                         exact_matches.append(c_info)
                     elif elem_name_lower == target_name_lower:
                         case_insensitive_matches.append(c_info)
-                    elif not exact and target_name_lower in elem_name_lower:
+                    elif target_name_lower in elem_name_lower or (len(elem_name_lower) > 3 and elem_name_lower in target_name_lower):
                         partial_matches.append(c_info)
 
                     _search(child, depth + 1)
@@ -997,6 +999,30 @@ def _get_edge_window() -> Optional[Any]:
         # Fallback by title
         for w in desktop.windows(visible_only=True):
             if "edge" in w.window_text().lower():
+                return w
+    except Exception:
+        pass
+    return None
+
+def _get_chrome_window() -> Optional[Any]:
+    """Find active or top Google Chrome window."""
+    if not is_available():
+        return None
+    desktop = get_desktop()
+    if not desktop:
+        return None
+    try:
+        active = get_active_window()
+        if active.get("status") == "success":
+            proc = active.get("process_name", "").lower()
+            if "chrome" in proc:
+                return active.get("wrapper")
+        windows = desktop.windows(process_name="chrome.exe", visible_only=True)
+        if windows:
+            return windows[0]
+        for w in desktop.windows(visible_only=True):
+            txt = w.window_text().lower()
+            if "chrome" in txt or "who's using chrome" in txt:
                 return w
     except Exception:
         pass

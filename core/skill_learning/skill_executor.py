@@ -189,7 +189,27 @@ class SkillExecutor:
             last_result = res
 
             if not res.is_success():
-                continue
+                # Check for coordinate fallback on click steps
+                coords = sub_params.get("coordinates") or (step.selector.get("coordinates") if step.selector else None)
+                if not coords and ("x" in sub_params and "y" in sub_params):
+                    coords = {"x": sub_params["x"], "y": sub_params["y"]}
+                elif not coords and step.selector and ("x" in step.selector and "y" in step.selector):
+                    coords = {"x": step.selector["x"], "y": step.selector["y"]}
+
+                if coords and "x" in coords and "y" in coords:
+                    logger.info("Step %d %s failed; attempting coordinate fallback (%s, %s)",
+                                step.step_id, step.tool, coords["x"], coords["y"])
+                    res = self.registry.execute(
+                        name="computer_control",
+                        parameters={"action": "click", "x": coords["x"], "y": coords["y"]},
+                        player=player,
+                        session_memory=session_memory,
+                    )
+                    last_result = res
+                    if not res.is_success():
+                        continue
+                else:
+                    continue
 
             # Verify post-condition if specified
             if step.verification:

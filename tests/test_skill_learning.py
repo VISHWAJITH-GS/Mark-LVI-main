@@ -21,6 +21,7 @@ import shutil
 import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from core.action_loader import ActionRegistry, get_default_registry
@@ -409,6 +410,8 @@ class TestLearningManagerLifecycle(unittest.TestCase):
 
     def tearDown(self):
         self.manager.cancel_learning()
+        self.manager.delete_skill("skillrack_login")
+        self.manager.delete_skill("skillrack_auto_login")
 
     def test_session_lifecycle(self):
         # 1. Start learning
@@ -438,8 +441,105 @@ class TestLearningManagerLifecycle(unittest.TestCase):
         self.assertIsNone(self.manager.current_session)
 
 
+    def test_auto_generation_on_stop(self):
+        """stop_learning should automatically generate and approve the demonstrated skill."""
+        self.manager.start_learning("Learn how to log in to Skillrack")
+        # Add mock events
+        self.manager.current_session.events = [
+            UIEvent(timestamp=1.0, event_type="click", app_name="Chrome", window_title="Skillrack", element_name="Login", selector={"x": 500, "y": 300}),
+            UIEvent(timestamp=2.0, event_type="type_text", app_name="Chrome", window_title="Skillrack", input_value="user@tce.edu"),
+        ]
+
+        with patch.object(self.manager.generator.analyzer, "analyze_demonstration") as mock_ana:
+            mock_ana.return_value = {
+                "skill_name": "Skillrack Login",
+                "skill_id": "skillrack_login",
+                "application": "Chrome",
+                "description": "Log into Skillrack",
+                "steps": [
+                    {"step_id": 1, "thought": "Click Login", "tool": "windows_uia", "parameters": {"action": "click", "name": "Login", "x": 500, "y": 300}},
+                ],
+            }
+            res = self.manager.stop_learning()
+            self.assertTrue(res["success"])
+            self.assertEqual(res["generated_skill_id"], "skillrack_login")
+            self.assertIn("Successfully generated and approved", res["message"])
+
+            # Verify it is approved in the registry
+            skill = self.manager.registry.get_skill("skillrack_login")
+            self.assertIsNotNone(skill)
+            self.assertEqual(skill.status, SkillStatus.APPROVED.value)
+
+    def test_skill_id_semantic_fallback(self):
+        """Even if model calls execute_skill with an imprecise/hallucinated ID, it resolves via semantic search or session."""
+        test_skill = SkillDefinition(
+            id="skillrack_auto_login",
+            name="Skillrack Login",
+            description="Log in to Skillrack student portal",
+            application="Chrome",
+            intent_examples=["login to skillrack", "skillrack login"],
+            steps=[StepDefinition(step_id=1, thought="Click", tool="windows_uia", parameters={"action": "click", "name": "Login"})],
+            status=SkillStatus.APPROVED.value,
+        )
+        self.manager.registry.save_and_register(test_skill)
+
+        # Call with a hallucinated ID
+        with patch.object(self.manager.executor, "execute") as mock_exec:
+            mock_exec.return_value = ActionResult.done("skill:skillrack_auto_login", message="Success")
+            res = self.manager.execute_skill("skill_chrome_skillrack_login")
+            self.assertTrue(res.is_success())
+            # Ensure it executed the resolved skill
+            called_skill = mock_exec.call_args[1]["skill"]
+            self.assertEqual(called_skill.id, "skillrack_auto_login")
+
+    def test_coordinate_fallback_execution(self):
+        """If windows_uia fails to find element by name, fallback to recorded coordinates via computer_control."""
+        executor = SkillExecutor()
+        coord_skill = SkillDefinition(
+            id="coord_test_skill",
+            name="Coordinate Fallback",
+            description="Test coord fallback",
+            steps=[
+                StepDefinition(
+                    step_id=1,
+                    thought="Click student profile",
+                    tool="windows_uia",
+                    parameters={"action": "click", "name": "student.tce.edu", "x": 640, "y": 480},
+                )
+            ],
+            status=SkillStatus.APPROVED.value,
+        )
+
+        with patch.object(executor.registry, "execute") as mock_exec:
+            # First call (windows_uia) fails, second call (computer_control coordinate click) succeeds
+            mock_exec.side_effect = [
+                ActionResult.failed("windows_uia", message="Element not found"),
+                ActionResult.done("computer_control", message="Clicked at (640, 480)"),
+            ]
+            res = executor.execute(coord_skill)
+            self.assertTrue(res.is_success())
+            self.assertEqual(mock_exec.call_count, 2)
+            second_call_params = mock_exec.call_args_list[1][1]["parameters"]
+            self.assertEqual(second_call_params["action"], "click")
+            self.assertEqual(second_call_params["x"], 640)
+            self.assertEqual(second_call_params["y"], 480)
+
+
 class TestSkillLearnerToolAction(unittest.TestCase):
     """Test actions.skill_learner tool execution with ActionRegistry."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.test_dir = Path(self.tmp.name)
+
+    def tearDown(self):
+        try:
+            from core.skill_learning.learning_manager import LearningManager
+            LearningManager.get_instance().delete_skill("skillrack_student_login")
+            LearningManager.get_instance().cancel_learning()
+        except Exception:
+            pass
+        self.tmp.cleanup()
 
     def test_skill_learner_registration_and_list(self):
         from core.action_loader import get_default_registry
@@ -455,6 +555,107 @@ class TestSkillLearnerToolAction(unittest.TestCase):
         # Test invalid action
         err_res = reg.execute("skill_learner", {"action": "non_existent_action_xyz"})
         self.assertEqual(err_res.status, STATUS_FAILED)
+
+    def test_full_skillrack_lifecycle_mocked(self):
+        """End-to-end lifecycle test for the Skillrack demonstration workflow."""
+        from actions import skill_learner
+        from core.skill_learning.learning_manager import LearningManager
+        from core.skill_learning.models import UIEvent
+
+        manager = LearningManager.get_instance()
+        manager.cancel_learning()
+
+        # 1. Start learning
+        start_res = manager.start_learning(goal="Learn how to log in to Skillrack using student profile")
+        self.assertIn("started", start_res.lower())
+        self.assertIsNotNone(manager.current_session)
+
+        # 2. Simulate captured events (including credentials)
+        t = time.time()
+        raw_events = [
+            UIEvent(timestamp=t, event_type="window_activate", app_name="msedge", window_title="Microsoft Edge"),
+            UIEvent(timestamp=t + 1, event_type="click", app_name="msedge", window_title="Microsoft Edge", element_name="Student", bounding_box={"x": 450, "y": 320, "w": 80, "h": 25}),
+            UIEvent(timestamp=t + 2, event_type="type_text", app_name="msedge", window_title="Microsoft Edge", element_name="Address bar", input_value="skillrack.com"),
+            UIEvent(timestamp=t + 3, event_type="click", app_name="msedge", window_title="Microsoft Edge", element_name="Login", bounding_box={"x": 800, "y": 200, "w": 60, "h": 25}),
+            UIEvent(timestamp=t + 4, event_type="type_text", app_name="msedge", window_title="Microsoft Edge", element_name="Student ID", input_value="2403917714821034@tce"),
+            UIEvent(timestamp=t + 5, event_type="type_text", app_name="msedge", window_title="Microsoft Edge", element_name="Password", input_value="forskillrack@2006"),
+            UIEvent(timestamp=t + 6, event_type="click", app_name="msedge", window_title="Microsoft Edge", element_name="Submit", bounding_box={"x": 800, "y": 450, "w": 60, "h": 25}),
+        ]
+        manager.current_session.events = raw_events
+
+        # 3. Stop learning -> triggers auto-analysis and generation
+        with patch.object(manager.generator.analyzer, "analyze_demonstration") as mock_analyze:
+            mock_analyze.return_value = {
+                "skill_name": "Skillrack Student Login",
+                "skill_id": "skillrack_student_login",
+                "application": "msedge",
+                "description": "Log into Skillrack student portal via Student profile",
+                "intent_examples": ["Login into my skill rack", "Open skillrack student"],
+                "parameters": [
+                    {"name": "username", "type": "string", "description": "Student register ID", "required": True, "is_credential": True},
+                    {"name": "password", "type": "string", "description": "Skillrack password", "required": True, "is_credential": True},
+                ],
+                "preconditions": ["Microsoft Edge is installed"],
+                "steps": [
+                    {"step_id": 1, "thought": "Open Edge", "tool": "open_app", "parameters": {"app_name": "msedge"}},
+                    {"step_id": 2, "thought": "Select Student Profile", "tool": "browser_profile", "parameters": {"profile_name": "Student", "x": 450, "y": 320}},
+                    {"step_id": 3, "thought": "Navigate to Skillrack", "tool": "browser_control", "parameters": {"action": "navigate", "url": "https://skillrack.com"}},
+                    {"step_id": 4, "thought": "Enter credentials", "tool": "windows_uia", "parameters": {"action": "type_text", "text": "{password}"}},
+                ],
+            }
+            stop_res = manager.stop_learning()
+            self.assertTrue(stop_res["success"])
+            skill_id = stop_res["generated_skill_id"]
+            self.assertEqual(skill_id, "skillrack_student_login")
+
+            # Verify persisted skill does NOT contain plaintext password
+            stored_skill = manager.registry.get_skill("skillrack_student_login")
+            self.assertIsNotNone(stored_skill)
+            raw_json = json.dumps(stored_skill.to_dict())
+            self.assertNotIn("forskillrack@2006", raw_json)
+            self.assertNotIn("2403917714821034", raw_json)
+
+            # 4. Test skill
+            with patch.object(manager.executor.registry, "execute") as mock_exec:
+                mock_exec.return_value = ActionResult.done("step", message="ok")
+                test_res = manager.test_skill(skill_id, test_parameters={"username": "std1", "password": "secret"})
+                self.assertTrue(test_res.is_success())
+
+            # 5. Approve skill
+            app_res = manager.approve_skill(skill_id)
+            self.assertTrue(app_res.is_success())
+            self.assertEqual(stored_skill.status, SkillStatus.APPROVED.value)
+
+            # 6. Execute skill
+            with patch.object(manager.executor.registry, "execute") as mock_exec:
+                mock_exec.return_value = ActionResult.done("step", message="Logged in")
+                exec_res = manager.execute_skill("skillrack_student_login", parameters={"username": "std1", "password": "secret", "__user_confirmed__": True})
+                self.assertTrue(exec_res.is_success())
+
+    def test_browser_profile_tool(self):
+        """Test actions.browser_profile detection and profile selection dispatch."""
+        from actions import browser_profile
+        from core.action_loader import get_default_registry
+
+        reg = get_default_registry()
+        self.assertTrue(reg.has("browser_profile"))
+
+        # Test detect action
+        det_res = browser_profile.browser_profile({"action": "detect"})
+        self.assertIn("status", det_res)
+
+        # Test select_profile with missing profile
+        fail_res = browser_profile.browser_profile({"action": "select_profile", "profile_name": ""})
+        self.assertIn("failed", fail_res)
+
+        # Test select_profile with coordinate fallback
+        with patch("actions.computer_control.computer_control") as mock_cc:
+            mock_cc.return_value = "clicked"
+            with patch("actions.windows_uia.find_element") as mock_fe:
+                mock_fe.return_value = {"status": "failed"}
+                succ_res = browser_profile.select_browser_profile(profile_name="Student", x=500, y=300)
+                self.assertIn("status=done", succ_res)
+                self.assertIn("coordinates", succ_res)
 
 
 if __name__ == "__main__":
