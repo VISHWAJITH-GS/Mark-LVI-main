@@ -569,6 +569,8 @@ def windows_control(parameters: dict = None, player=None, **kwargs) -> str:
         if not target:
             return outcome.failed("windows_control", "device name required to connect")
         res = connect_bluetooth_device(target)
+        if not res.get("verified", False):
+            return outcome.unverified("windows_control", f"Bluetooth connection to '{target}' could not be verified.", **res)
         return outcome.done("windows_control", **res)
 
     if action in ("disconnect_bluetooth_device", "disconnect_bluetooth", "disconnect_device"):

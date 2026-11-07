@@ -271,12 +271,19 @@ Example:
             elif action == "windows_control":
                 from actions import windows_control
                 res = windows_control.windows_control(params)
-                return True, str(res)
+                # Check for unverified or failure in string or dict result
+                res_str = str(res)
+                ok = "status=done" in res_str
+                if not ok and "status=unverified" in res_str:
+                    ok = False
+                return ok, res_str
 
             elif action == "spotify_control":
                 from actions import spotify_control
                 res = spotify_control.spotify_control(params)
-                return True, str(res)
+                res_str = str(res)
+                ok = "status=done" in res_str
+                return ok, res_str
 
             elif action == "verify_state":
                 exp = params.get("expected_window", "").lower()
