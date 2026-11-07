@@ -385,10 +385,11 @@ TOOL_DECLARATIONS = [
     {
         "name": "screen_process",
         "description": (
-            "Captures the screen or webcam image and lets you analyze it. "
-            "MUST be called when user asks what is on screen, what you see, "
-            "look at camera, analyze my screen, etc. "
-            "You have NO visual ability without this tool. "
+            "Captures the screen or webcam image and lets you describe or analyze it visually. "
+            "MUST be called when the user explicitly asks what is on screen, what you see, "
+            "look at camera, analyze my screen, describe what is visible, etc. "
+            "NEVER call this tool to find things to click, open folders, or navigate UI — "
+            "use windows_uia or computer_control by element name instead. "
             "After the image is captured it is sent directly to you — describe what you see and answer the user's question. "
             "When using camera: the live view stays open until user says close it or calls close_camera."
         ),

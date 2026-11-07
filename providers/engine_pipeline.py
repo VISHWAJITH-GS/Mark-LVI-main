@@ -482,11 +482,11 @@ class PipelineEngine:
 
             text = "".join(said)
 
-            # A prompt-mode model answers with JSON instead of a tool-call field.
-            if not calls and self.caps.get("tool_format") == "prompt":
-                parsed = _parse_prompt_call(text, set(self.tool_names()))
-                if parsed:
-                    calls, text = [parsed], ""
+            # A model answers with tool calls as text/code instead of an API tool-call field.
+            if not calls:
+                extracted = _extract_all_tool_calls(text, set(self.tool_names()))
+                if extracted:
+                    calls, text = extracted, ""
 
             if calls:
                 self._rounds += 1
@@ -1125,13 +1125,7 @@ def _stringify(value: Any) -> str:
 
 
 def _parse_prompt_call(text: str, known: set[str]) -> Optional[FunctionCall]:
-    """A tool call out of a prompt-mode model's reply.
-
-    The model was asked for {"tool": ..., "args": {...}} and nothing else, and
-    it will often wrap it in a code fence or a sentence anyway. The name is
-    checked against the tools actually declared: a model that invents one is
-    answering, not calling, and the reply should reach the user as words.
-    """
+    """A tool call out of a prompt-mode model's reply."""
     if not text or "{" not in text:
         return None
     chunk = text[text.find("{"):text.rfind("}") + 1]
@@ -1146,6 +1140,59 @@ def _parse_prompt_call(text: str, known: set[str]) -> Optional[FunctionCall]:
         return None
     args = obj.get("args") if isinstance(obj.get("args"), dict) else {}
     return FunctionCall(id=f"call_{name}", name=name, args=args)
+
+
+def _extract_all_tool_calls(text: str, known: set[str]) -> list[FunctionCall]:
+    """Extract tool calls from model output whether in JSON or Python pseudo-code style.
+    
+    Many local models (e.g. Ollama models) output function calls in text or code blocks:
+      ```
+      computer_control(action='open_app', app_name='Microsoft Edge')
+      computer_control(action='go_to', url='https://www.skilljack.com')
+      ```
+      or:
+      {"tool": "browser_control", "args": {"action": "go_to", "url": "..."}}
+    """
+    if not text:
+        return []
+
+    calls = []
+
+    # 1. Try JSON block first
+    single = _parse_prompt_call(text, known)
+    if single:
+        return [single]
+
+    # 2. Extract Python-style function calls: name(arg1=val1, ...)
+    import ast
+    import re
+
+    # Pattern matches tool_name(...)
+    pattern = re.compile(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*?)\)', re.DOTALL)
+    for match in pattern.finditer(text):
+        name = match.group(1).strip()
+        if name in known:
+            raw_args = match.group(2).strip()
+            args = {}
+            if raw_args:
+                try:
+                    # Parse as python expression
+                    code = f"func({raw_args})"
+                    tree = ast.parse(code)
+                    call_node = tree.body[0].value
+                    for kw in call_node.keywords:
+                        try:
+                            args[kw.arg] = ast.literal_eval(kw.value)
+                        except Exception:
+                            # String representation fallback
+                            args[kw.arg] = ast.unparse(kw.value).strip("'\"")
+                except Exception:
+                    # Fallback regex for key=val
+                    for param_match in re.finditer(r'([a-zA-Z_]\w*)\s*=\s*(["\'])(.*?)\2', raw_args):
+                        args[param_match.group(1)] = param_match.group(3)
+            calls.append(FunctionCall(id=f"call_{name}_{len(calls)}", name=name, args=args))
+
+    return calls
 
 
 def _make(cfg: dict) -> PipelineEngine:

@@ -226,6 +226,25 @@ def validate_coordinates(
     return x, y, True, "valid"
 
 
+def find_element_at_point(x: int, y: int) -> Optional[dict]:
+    """Find the UI element directly under screen coordinates (x, y)."""
+    if not is_available():
+        return None
+    desktop = get_desktop()
+    if not desktop:
+        return None
+    try:
+        info = desktop.backend.element_info_class.from_point(x, y)
+        if info:
+            wrapper = UIAWrapper(info)
+            collected = _collect_element_info(wrapper)
+            if collected:
+                return {"element": wrapper, "info": collected}
+    except Exception:
+        pass
+    return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  A. GET ACTIVE WINDOW
 # ─────────────────────────────────────────────────────────────────────────────
@@ -389,9 +408,11 @@ def inspect_window(
         target_wrapper = window
         if target_wrapper is None:
             active = get_active_window()
-            if active.get("status") != "success":
-                return active
-            target_wrapper = active.get("wrapper")
+            if active.get("status") == "success":
+                target_wrapper = active.get("wrapper")
+            if target_wrapper is None:
+                # Look for Edge or Explorer
+                target_wrapper = _get_edge_window() or _get_file_explorer_window()
 
         if target_wrapper is None:
             return {"status": "failed", "reason": "No valid window to inspect."}
@@ -487,15 +508,23 @@ def find_elements(
         target_wrapper = window
         if target_wrapper is None:
             active = get_active_window()
-            if active.get("status") != "success":
-                return active
-            target_wrapper = active.get("wrapper")
-
-        if target_wrapper is None:
-            return {"status": "failed", "reason": "No target window to search."}
+            if active.get("status") == "success":
+                target_wrapper = active.get("wrapper")
+            if target_wrapper is None:
+                # Look for Edge or Explorer
+                target_wrapper = _get_edge_window() or _get_file_explorer_window()
 
         target_name = (name or "").strip()
         target_name_lower = target_name.lower()
+
+        if target_wrapper is None:
+            if "edge" in target_name_lower or "tab" in target_name_lower or "browser" in target_name_lower:
+                target_wrapper = _get_edge_window()
+            if target_wrapper is None:
+                target_wrapper = _get_file_explorer_window()
+
+        if target_wrapper is None:
+            return {"status": "failed", "reason": "No target window to search."}
 
         exact_matches: List[dict] = []
         case_insensitive_matches: List[dict] = []
@@ -932,6 +961,53 @@ def _get_file_explorer_window() -> Optional[Any]:
         pass
     return None
 
+def _get_edge_window() -> Optional[Any]:
+    """Find active or top Microsoft Edge window."""
+    if not is_available():
+        return None
+    desktop = get_desktop()
+    if not desktop:
+        return None
+    try:
+        active = get_active_window()
+        if active.get("status") == "success":
+            proc = active.get("process_name", "").lower()
+            if "msedge" in proc or "edge" in proc:
+                return active.get("wrapper")
+        windows = desktop.windows(process_name="msedge.exe", visible_only=True)
+        if windows:
+            return windows[0]
+        # Fallback by title
+        for w in desktop.windows(visible_only=True):
+            if "edge" in w.window_text().lower():
+                return w
+    except Exception:
+        pass
+    return None
+    """Find active or top File Explorer window."""
+    if not is_available():
+        return None
+    desktop = get_desktop()
+    if not desktop:
+        return None
+
+    try:
+        # Check active window first
+        active = get_active_window()
+        if active.get("status") == "success":
+            proc = active.get("process_name", "").lower()
+            cls = active.get("class_name", "")
+            if "explorer" in proc or cls == "CabinetWClass":
+                return active.get("wrapper")
+
+        # Search for CabinetWClass windows
+        windows = desktop.windows(class_name="CabinetWClass", visible_only=True)
+        if windows:
+            return windows[0]
+    except Exception:
+        pass
+    return None
+
 
 def open_file_explorer_item(
     item_name: str,
@@ -957,6 +1033,23 @@ def open_file_explorer_item(
         )
 
     exp_win = window or _get_file_explorer_window()
+    if not exp_win:
+        # If File Explorer is not open, automatically attempt to launch it to the requested path
+        try:
+            import os
+            clean_path = item_name.strip()
+            if os.path.exists(clean_path):
+                os.startfile(clean_path)
+                return outcome.done(
+                    "uia_open", folder=clean_path, matched=clean_path, method="os.startfile", verified=True
+                )
+            else:
+                os.startfile("explorer.exe")
+                time.sleep(1.0)
+                exp_win = _get_file_explorer_window()
+        except Exception:
+            pass
+
     if not exp_win:
         return outcome.failed(
             "uia_open",
@@ -1328,13 +1421,13 @@ def windows_uia(
 TOOL = {
     "name": "windows_uia",
     "description": (
-        "Windows UI Automation: identify and interact with desktop UI elements by "
-        "their accessible names, roles, control types, and window hierarchies. "
-        "Use this for accurate clicking, typing, folder navigation in File Explorer, "
-        "and inspecting UI controls without guessing visual coordinates."
+        "Windows UI Automation: MUST be used whenever the user asks to open a folder or file "
+        "in File Explorer (e.g. 'Semester 5', 'Downloads', 'Projects'), click any button, or type on Windows. "
+        "DO NOT call screen_process or guess mouse coordinates — call this tool with action='open_file_explorer_item' "
+        "and name='<exact folder name>' to open folders reliably without clicking adjacent items."
     ),
     "brief": (
-        "Automates Windows desktop UI: click, type, inspect, and open folders in File Explorer by accessible element name."
+        "Accurate Windows UI automation: opens File Explorer folders and clicks controls by exact name without coordinate guessing."
     ),
     "parameters": {
         "type": "OBJECT",
@@ -1342,8 +1435,8 @@ TOOL = {
             "action": {
                 "type": "STRING",
                 "description": (
-                    "get_active_window | inspect_window | find_element | click_element | "
-                    "type_text | scroll | open_file_explorer_item"
+                    "open_file_explorer_item | click_element | type_text | get_active_window | "
+                    "inspect_window | find_element | scroll"
                 ),
             },
             "name": {

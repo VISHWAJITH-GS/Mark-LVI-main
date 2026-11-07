@@ -178,27 +178,7 @@ def _desktop_send(app_name: str, receiver: str, message: str) -> str:
     )
 
 def _send_whatsapp(receiver: str, message: str) -> str:
-    """WhatsApp goes through the verified driver when there is one.
-
-    _desktop_send below is a sequence of keystrokes with sleeps between them:
-    it presses Win, types the app name, presses Ctrl+F, types the contact,
-    presses Enter twice and reports success — without ever reading back which
-    window received any of that. When the machine is a second slower than the
-    sleeps assume, the whole sequence lands somewhere else and the user is
-    still told the message was sent.
-
-    plugins/_whatsapp_core.py already drives WhatsApp properly for the calling
-    plugins: it finds the real window, opens the conversation, checks the
-    conversation is the right person's, types, and confirms the box emptied
-    before it says "sent". Using it here costs nothing and removes the one
-    failure that matters — a message reported as delivered that never left.
-
-    The blind path stays as the fallback for a machine where the driver cannot
-    run at all (the plugin file removed, a missing dependency, no WhatsApp).
-    But once the driver HAS run, its answer stands: falling back after it
-    refused to send is how a message ends up typed into the wrong
-    conversation, which is worse than not sending it.
-    """
+    """WhatsApp goes through the verified driver when there is one."""
     try:
         from plugins import _whatsapp_core as wa
     except Exception as e:
@@ -215,13 +195,18 @@ def _send_whatsapp(receiver: str, message: str) -> str:
         print(f"[SendMessage] {why} — typing blind.")
         return _desktop_send("WhatsApp", receiver, message)
 
-    sent, failure = transport.send_message_to(receiver, message)
+    # Polish message into a formal/polite format if not already styled
+    formatted_msg = message
+    try:
+        from plugins.whatsapp_automation import _polish_message_formal
+        formatted_msg = _polish_message_formal(message)
+    except Exception:
+        pass
+
+    sent, failure = transport.send_message_to(receiver, formatted_msg)
     if sent:
-        # The one platform that can say `done`: the driver opened the
-        # conversation, proved it was the right person's, typed, and confirmed
-        # the box emptied.
         return outcome.done("send_message", platform="WhatsApp",
-                            to=receiver, verified=True)
+                            to=receiver, message=formatted_msg, verified=True)
     return outcome.failed("send_message", failure,
                           platform="WhatsApp", to=receiver)
 
@@ -328,9 +313,8 @@ def send_message(
 
     if not receiver:
         return outcome.failed("send_message", "no recipient was given")
-    if not message_text:
-        return outcome.failed("send_message", "no message text was given",
-                              to=receiver)
+    if not message_text or any(p in message_text.lower() for p in ("enter your message", "message for", "placeholder", "your message here")):
+        return outcome.ask("send_message", f"What message would you like me to send to {receiver}?", to=receiver)
     if not _PYAUTOGUI:
         return outcome.failed(
             "send_message",

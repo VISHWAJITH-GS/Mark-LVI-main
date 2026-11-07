@@ -23,16 +23,29 @@
                 "catalog": "ollama",
                 "api_key": "",
                 "vision": "",
-                "vision_model": "qwen2.5-coder:3b"
+                "vision_model": "llama3.2:3b"
             },
             "system_tts@system": {
                 "catalog": "system",
-                "voice": "Microsoft David Desktop",
+                "voice": "Microsoft Zira Desktop",
                 "rate": "0",
                 "vision": ""
             },
             "piper@piper": {
-                "catalog": "piper"
+                "catalog": "piper",
+                "vision": "",
+                "voice": "ar_JO-kareem-low",
+                "follow_language": "1",
+                "speed": "1.0"
+            },
+            "openai_compat@minimax": {
+                "base_url": "https://api.minimax.io/v1",
+                "model": "MiniMax-M3.1-Flash",
+                "max_tools": "",
+                "max_tool_chars": "",
+                "catalog": "minimax",
+                "api_key": "",
+                "vision": ""
             }
         },
         "mode": "gemini",
@@ -42,12 +55,14 @@
             "tts": "system_tts@system"
         },
         "sidecar": "openai_compat@ollama",
-        "sidecar_first": false,
-        "coding": "openai_compat@ollama"
+        "sidecar_first": true,
+        "coding": ""
     },
     "hud_style": "core",
     "assistant_name": "JARVIS",
     "user_name": "Sir",
     "ui_color": "#00d4ff",
-    "morning_brief_enabled": false
+    "morning_brief_enabled": false,
+    "input_device": "Headset (OPPO Enco Buds2)",
+    "output_device": "Headphones (OPPO Enco Buds2)"
 }

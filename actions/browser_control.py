@@ -1138,9 +1138,38 @@ def browser_control(
         return result
 
     # ── Interactive actions (click/type/read…) ───────────────────────────────
-    # These require a physically controllable browser; the automation window
-    # only opens here, and as soon as it opens it goes to the user's last
-    # navigated page — it doesn't sit on a blank page.
+    # These require a physically controllable browser; if playwright automation session
+    # is available, use it. Otherwise, seamless UIA bridge to inspect/click/type directly in Edge!
+    if not _registry.has(browser) and _OS == "Windows":
+        # Check if Microsoft Edge is running on desktop and we can interact via Windows UIA
+        try:
+            from actions import windows_uia
+            if windows_uia.is_available():
+                edge_win = windows_uia._get_edge_window()
+                if edge_win:
+                    if action in ("click", "smart_click"):
+                        target_text = params.get("text") or params.get("description") or params.get("selector")
+                        if target_text:
+                            click_res = windows_uia.click_element(target_text, window=edge_win)
+                            if click_res.get("status") in ("done", "success"):
+                                return f"Clicked '{target_text}' in Microsoft Edge."
+                    elif action in ("type", "smart_type"):
+                        text_to_type = params.get("text", "")
+                        target_field = params.get("selector") or params.get("description")
+                        type_res = windows_uia.type_text(text_to_type, element_or_name=target_field, window=edge_win)
+                        if type_res.get("status") == "done":
+                            return f"Typed '{text_to_type}' into Microsoft Edge."
+                    elif action == "get_text":
+                        ins = windows_uia.inspect_window(window=edge_win, max_depth=3, limit=30)
+                        if ins.get("status") == "success":
+                            names = [e["name"] for e in ins.get("elements", []) if e.get("name")]
+                            return f"Edge browser elements: {', '.join(names[:20])}"
+                    elif action == "scroll":
+                        windows_uia.scroll(direction=params.get("direction", "down"), amount=int(params.get("amount", 500)), window=edge_win)
+                        return f"Scrolled {params.get('direction', 'down')} in Microsoft Edge."
+        except Exception as e:
+            print(f"[Browser] UIA fallback encountered: {e}")
+
     try:
         sess = _registry.get(browser)
     except Exception as e:

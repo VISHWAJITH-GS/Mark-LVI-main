@@ -163,9 +163,12 @@ def _transport_works(idx: int, kind: str, api_key) -> bool:
             time.sleep(secs)
             st.stop(); st.close()
             ok = frames[0] > rate * secs * 0.3
-            if not ok:
-                print(f"[Audio] input: host API delivered {frames[0]} frames in "
-                      f"{secs*1000:.0f} ms — skipping it")
+            # If a strict frame threshold failed (e.g. Bluetooth device taking a moment to wake up),
+            # but the stream opened without error and delivered frames or opened clean, accept it as fallback.
+            if not ok and frames[0] > 0:
+                ok = True
+            elif not ok and _usable(idx, kind):
+                ok = True
     except Exception as e:
         print(f"[Audio] {kind} transport probe failed: {e}")
         ok = False

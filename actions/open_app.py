@@ -359,6 +359,22 @@ def open_app(parameters=None, response=None, player=None,
               f"raised — launching it instead, which is what brings back an "
               f"app that is only in the tray.")
 
+    # Check if this refers to an item inside an active/open File Explorer window
+    if _SYSTEM == "Windows":
+        try:
+            from actions import windows_uia
+            if windows_uia.is_available():
+                exp_win = windows_uia._get_file_explorer_window()
+                if exp_win:
+                    find_res = windows_uia.find_elements(spoken, window=exp_win, exact=False)
+                    if find_res.get("status") == "success":
+                        res = windows_uia.open_file_explorer_item(spoken, window=exp_win)
+                        if "status=done" in res:
+                            _log(player, f"JARVIS: {spoken} is open.")
+                            return res
+        except Exception as e:
+            print(f"[open_app] UIA check failed: {e}")
+
     launcher_name = appidentity.launcher_name(spoken)
     before = appidentity.snapshot()
     _log(player, f"JARVIS: Opening {spoken}…")

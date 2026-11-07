@@ -209,6 +209,16 @@ def _click(x=None, y=None, button: str = "left", clicks: int = 1) -> str:
                 print(f"[ComputerControl] ⚠️ Refusing click at invalid coordinates ({x}, {y}): {reason}")
                 return outcome.failed("click", f"Coordinates ({x}, {y}) are invalid: {reason}")
             x, y = adj_x, adj_y
+
+            # Snap to UIA element center if an accessible control exists under this point
+            if windows_uia.is_available():
+                elem_info = windows_uia.find_element_at_point(x, y)
+                if elem_info:
+                    r = elem_info["info"]["bounding_rectangle"]
+                    if r.get("width", 0) > 0 and r.get("height", 0) > 0:
+                        cx = (r["left"] + r["right"]) // 2
+                        cy = (r["top"] + r["bottom"]) // 2
+                        x, y = cx, cy
         except Exception:
             pass
         pyautogui.click(x, y, button=button, clicks=clicks)
@@ -435,6 +445,24 @@ def _close_app(app_name: str, confirmed_index: int | None = None) -> str:
         print(f"[ComputerControl] close_app: '{app_name}' -> {target_name} "
               f"(also matched: {', '.join(n for n, _ in ranked[1:5])})")
 
+    # Check if target is a special Windows application that shouldn't be terminated by process
+    is_windows = os_name == "Windows"
+    lower_target = target_name.lower()
+    if is_windows and ("explorer" in lower_target or "file explorer" in lower_target):
+        # Close the open File Explorer window (CabinetWClass), never kill explorer.exe
+        closed_win = False
+        try:
+            import win32gui, win32con
+            hwnd = win32gui.FindWindow("CabinetWClass", None)
+            if hwnd:
+                win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+                closed_win = True
+        except Exception:
+            pass
+        if closed_win:
+            return outcome.done("close_app", app=app_name, closed="File Explorer", verified=True)
+        return outcome.failed("close_app", "No open File Explorer window was found to close.", app=app_name)
+
     closed, still_open, reason = 0, 0, ""
     for match in group:
         gone, detail = appidentity.request_close(match)
@@ -585,11 +613,21 @@ def computer_control(
                 clear_first=params.get("clear_first", True),
             )
 
-        if action in ("click", "left_click"):
-            return _click(params.get("x"), params.get("y"), "left", 1)
-
-        if action == "double_click":
-            return _click(params.get("x"), params.get("y"), "left", 2)
+        if action in ("click", "left_click", "double_click"):
+            target_name = params.get("description") or params.get("name") or params.get("text") or params.get("item")
+            clicks = 2 if action == "double_click" else 1
+            if target_name and windows_uia.is_available():
+                # If opening an item/folder in File Explorer
+                if action == "double_click" or "folder" in str(target_name).lower():
+                    exp_res = windows_uia.open_file_explorer_item(str(target_name))
+                    if "status=done" in exp_res:
+                        return exp_res
+                click_res = windows_uia.click_element(str(target_name))
+                if click_res.get("status") in ("done", "success"):
+                    return outcome.done(action, target=target_name, method=click_res.get("method"), verified=True)
+                elif click_res.get("status") == "ambiguous":
+                    return outcome.ask(action, click_res.get("question", f"Multiple elements matched '{target_name}'."))
+            return _click(params.get("x"), params.get("y"), "left", clicks)
 
         if action == "right_click":
             return _click(params.get("x"), params.get("y"), "right", 1)
