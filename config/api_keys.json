@@ -1,0 +1,53 @@
+{
+    "gemini_api_key": "AQ.Ab8RN6K8Yp_wC-cV0C_ouJDICiXNiIZmzfLzRKw6N9wdNte4_w",
+    "os_system": "windows",
+    "push_to_talk_enabled": false,
+    "providers": {
+        "creds": {
+            "whisper@local": {
+                "backend": "local",
+                "base_url": "",
+                "api_key": "",
+                "catalog": "local",
+                "model": "base",
+                "device": "cpu",
+                "language": "",
+                "download_root": "",
+                "vision": ""
+            },
+            "openai_compat@ollama": {
+                "base_url": "http://127.0.0.1:11434/v1",
+                "model": "llama3.2:3b",
+                "max_tools": "14",
+                "max_tool_chars": "12000",
+                "catalog": "ollama",
+                "api_key": "",
+                "vision": "",
+                "vision_model": "qwen2.5-coder:3b"
+            },
+            "system_tts@system": {
+                "catalog": "system",
+                "voice": "Microsoft David Desktop",
+                "rate": "0",
+                "vision": ""
+            },
+            "piper@piper": {
+                "catalog": "piper"
+            }
+        },
+        "mode": "gemini",
+        "pipeline": {
+            "stt": "whisper@local",
+            "llm": "openai_compat@ollama",
+            "tts": "system_tts@system"
+        },
+        "sidecar": "openai_compat@ollama",
+        "sidecar_first": false,
+        "coding": "openai_compat@ollama"
+    },
+    "hud_style": "core",
+    "assistant_name": "JARVIS",
+    "user_name": "Sir",
+    "ui_color": "#00d4ff",
+    "morning_brief_enabled": false
+}
