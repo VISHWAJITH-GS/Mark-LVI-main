@@ -204,27 +204,32 @@ def _click(x=None, y=None, button: str = "left", clicks: int = 1) -> str:
     _require_pyautogui()
     if x is not None and y is not None:
         try:
-            adj_x, adj_y, is_valid, reason = windows_uia.validate_coordinates(int(x), int(y))
+            req_x, req_y = int(x), int(y)
+            adj_x, adj_y, is_valid, reason = windows_uia.validate_coordinates(req_x, req_y)
             if not is_valid:
-                print(f"[ComputerControl] ⚠️ Refusing click at invalid coordinates ({x}, {y}): {reason}")
-                return outcome.failed("click", f"Coordinates ({x}, {y}) are invalid: {reason}")
-            x, y = adj_x, adj_y
+                print(f"[ComputerControl] ⚠️ Refusing click at invalid requested coordinates ({req_x}, {req_y}): {reason}")
+                return outcome.failed("click", f"Coordinates ({req_x}, {req_y}) are invalid: {reason}")
 
-            # Snap to UIA element center if an accessible control exists under this point
+            final_x, final_y = adj_x, adj_y
+            # Snap to UIA element center only if an accessible control exists under this exact point
             if windows_uia.is_available():
-                elem_info = windows_uia.find_element_at_point(x, y)
+                elem_info = windows_uia.find_element_at_point(adj_x, adj_y)
                 if elem_info:
                     r = elem_info["info"]["bounding_rectangle"]
                     if r.get("width", 0) > 0 and r.get("height", 0) > 0:
                         cx = (r["left"] + r["right"]) // 2
                         cy = (r["top"] + r["bottom"]) // 2
-                        x, y = cx, cy
-        except Exception:
-            pass
-        pyautogui.click(x, y, button=button, clicks=clicks)
-        return f"{'Double-c' if clicks == 2 else 'C'}licked ({x}, {y}) [{button}]"
-    pyautogui.click(button=button, clicks=clicks)
-    return f"Clicked at current position [{button}]"
+                        final_x, final_y = cx, cy
+
+            pyautogui.click(final_x, final_y, button=button, clicks=clicks)
+            print(f"[ComputerControl] Click executed: requested=({req_x}, {req_y}), executed=({final_x}, {final_y})")
+            return f"{'Double-c' if clicks == 2 else 'C'}licked ({final_x}, {final_y}) [{button}]"
+        except Exception as e:
+            return outcome.failed("click", f"Click error at ({x}, {y}): {e}")
+
+    # Explicitly refuse silent center clicking when coordinates are missing
+    print("[ComputerControl] ⚠️ Refusing click: no coordinates specified.")
+    return outcome.failed("click", "No target coordinates or element specified for click.")
 
 
 def _hotkey(*keys) -> str:

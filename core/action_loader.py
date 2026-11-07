@@ -168,15 +168,23 @@ class ActionRegistry:
 
 def _call_handler(fn: Callable, parameters: dict, ctx: dict) -> str:
     """Invoke the handler passing only the context kwargs it actually declares
-    (or all of them if it has **kwargs), so each action's existing signature
-    works unchanged."""
+    (or all of them if it has **kwargs), and validate arguments against callable parameters."""
     sig = inspect.signature(fn)
     has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+
+    # Filter context arguments
     kwargs = {}
     for key in _CTX_KEYS:
         if has_var_kw or key in sig.parameters:
             kwargs[key] = ctx.get(key)
-    return fn(parameters=parameters, **kwargs)
+
+    # Some tools accept (parameters: dict, ...), while others accept direct kwargs (*args / **kwargs)
+    if "parameters" in sig.parameters or has_var_kw:
+        return fn(parameters=parameters, **kwargs)
+    else:
+        # If tool expects direct keyword arguments instead of a 'parameters' dict
+        clean_args = {k: v for k, v in parameters.items() if has_var_kw or k in sig.parameters}
+        return fn(**clean_args, **kwargs)
 
 
 def _validate(module, filename: str) -> ActionRecord:

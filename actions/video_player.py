@@ -275,23 +275,9 @@ def _say(player, instruction: str) -> None:
 TOOL = {
     "name": "video_player",
     "description": (
-        "If user wants to open a video on YouTube, he will tell you that specifically"
-        "If user wants to play a video, then he wants to call this feature"
-        "Plays a VIDEO on the assistant's own display, where the avatar "
-        "normally is — and stops it, mutes it or unmutes it. Use whenever the "
-        "user wants to WATCH something on screen: 'play the new Dune trailer', "
-        "'play that video', 'play C:/clips/holiday.mp4', 'put that YouTube "
-        "video on the screen', 'stop the video', 'videoyu kapat', 'turn the "
-        "sound on', 'sesi aç', 'mute it'. Accepts a local file path, a direct "
-        "video URL, a YouTube link, or a description to search YouTube for. "
-        "Video always starts MUTED — only call action='unmute' when the user "
-        "actually asks to hear it. "
-        "This returns the moment it is asked, before the picture appears: when "
-        "it answers 'status=opening', say in one short sentence that you are "
-        "putting it on the display, and do not wait or call it again. "
-        "Do NOT use 'youtube_video' for this: that optional plugin opens videos "
-        "in the web browser and summarises transcripts, it never plays anything "
-        "on the assistant's display."
+        "Plays a VIDEO (YouTube videos, local .mp4/.mkv video files, or video URLs) on the assistant's display. "
+        "Use ONLY when the user explicitly asks to watch a video or mentions YouTube / trailer / video clip. "
+        "DO NOT use for music songs, playlists or Spotify tracks — for music, songs, or Spotify playback always call 'spotify_control'."
     ),
     # Used in place of `description` only when a small model is on a tool
     # budget - Gemini still gets the full text. See providers/schema.py.

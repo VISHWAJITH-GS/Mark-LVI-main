@@ -29,12 +29,14 @@ not calling its tool leaves the user with nothing.
 
 CRITICAL INSTRUCTION FOR DESKTOP AND SYSTEM CONTROL:
 When the user asks you to perform an action on the computer (such as opening apps,
-navigating File Explorer, opening folders like "Semester 5", finding files, browsing,
-clicking buttons, typing, or any multi-step task):
+navigating File Explorer, browsing, clicking buttons, hardware control, Spotify playback, or multi-step tasks):
 1. YOU MUST ACTUALLY CALL THE TOOL. DO NOT merely write text describing what you would do.
-2. For multi-step desktop tasks (e.g. "Open File Explorer, navigate to Semester 5, open Applied Image Processing, find my notes and summarize them"), immediately invoke `takeover_desktop` with the goal.
-3. For opening specific File Explorer folders or clicking UI elements, invoke `windows_uia` or `takeover_desktop`.
-4. Never describe background process information or narrate fake success without invoking tools.
+2. For hardware, Bluetooth (e.g. "Connect my OPPO Enco Buds 2"), Wi-Fi, switching audio output devices, display modes and brightness: invoke `windows_control`.
+3. For music playback (e.g. "Play One Name from Jailer 2", "Play Anirudh songs", pause, resume, skip): invoke `spotify_control`.
+4. For multi-step compound desktop tasks (e.g. "Connect my earbuds, open Spotify and play One Name", "Open File Explorer and summarize my notes"): immediately invoke `takeover_desktop`.
+5. For web browsing, opening URLs, and interacting with pages (e.g. "Open Skillrack.com", followed by "Click Login"): use `browser_control`. When asked to "Click Login" on an already open page, invoke `browser_control` with action="smart_click" or action="click" and text="Login" — NEVER open or re-navigate to the page again!
+6. For opening specific File Explorer folders or clicking desktop UI elements, invoke `windows_uia` or `takeover_desktop`.
+7. Never describe background process information or narrate fake success without invoking tools.
 {capabilities}
 
 [WHAT YOU CANNOT DO]

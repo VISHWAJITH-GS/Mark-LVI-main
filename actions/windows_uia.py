@@ -657,10 +657,18 @@ def find_element(
 #  D. CLICK ELEMENT
 # ─────────────────────────────────────────────────────────────────────────────
 def click_element(
-    element_or_name: Union[Any, str],
+    element_or_name: Union[Any, str] = None,
     control_type: Optional[str] = None,
     window: Optional[Any] = None,
+    name: Optional[str] = None,
+    **kwargs: Any,
 ) -> dict:
+    """
+    Reliably click a UI element.
+    Accepts element_or_name as first arg or name="...".
+    """
+    if element_or_name is None and name is not None:
+        element_or_name = name
     """
     Reliably click a UI element.
     Priority order:
@@ -812,7 +820,16 @@ def type_text(
     element_or_name: Optional[Union[Any, str]] = None,
     clear_first: bool = True,
     window: Optional[Any] = None,
+    element_name: Optional[str] = None,
+    name: Optional[str] = None,
+    **kwargs: Any,
 ) -> dict:
+    """
+    Identify intended input field, focus it, enter text, and verify.
+    Accepts element_or_name, element_name, or name.
+    """
+    if element_or_name is None:
+        element_or_name = element_name if element_name is not None else name
     """
     Identify intended input field, focus it, enter text, and verify.
     """
@@ -984,26 +1001,26 @@ def _get_edge_window() -> Optional[Any]:
     except Exception:
         pass
     return None
-    """Find active or top File Explorer window."""
+
+
+def find_window_by_name(name: str) -> Optional[Any]:
+    """Find a top-level window by title or process substring."""
     if not is_available():
         return None
     desktop = get_desktop()
     if not desktop:
         return None
-
     try:
-        # Check active window first
         active = get_active_window()
         if active.get("status") == "success":
+            title = active.get("title", "").lower()
             proc = active.get("process_name", "").lower()
-            cls = active.get("class_name", "")
-            if "explorer" in proc or cls == "CabinetWClass":
+            if name.lower() in title or name.lower() in proc:
                 return active.get("wrapper")
-
-        # Search for CabinetWClass windows
-        windows = desktop.windows(class_name="CabinetWClass", visible_only=True)
-        if windows:
-            return windows[0]
+        for w in desktop.windows(visible_only=True):
+            w_text = w.window_text().lower()
+            if name.lower() in w_text:
+                return w
     except Exception:
         pass
     return None
@@ -1222,9 +1239,9 @@ def open_file_explorer_item(
     # Unverified
     return outcome.unverified(
         "uia_open",
+        "Open command was executed but resulting window state could not be verified.",
         item=target_name,
         method=method_used,
-        note="Open command was executed but resulting window state could not be verified.",
     )
 
 

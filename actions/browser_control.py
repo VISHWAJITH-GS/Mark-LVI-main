@@ -1101,12 +1101,12 @@ def browser_control(
         return result
 
     # ── Navigation is ALWAYS native ──────────────────────────────────────────
-    # go_to / search / new_tab open the site in the user's own browser —
+    # go_to / navigate / open / search / new_tab open the site in the user's own browser —
     # their own profile, logged-in accounts and start page; exactly as if the
     # user had opened it themselves. A controlled window with about:blank never
     # opens here. The only exception: if an automation flow is already running,
     # navigation continues in that window (so multi-step tasks aren't split).
-    if action in ("go_to", "search", "new_tab"):
+    if action in ("go_to", "navigate", "open", "search", "new_tab"):
         if _registry.has(browser):
             sess = _registry.get(browser)
             try:
@@ -1129,7 +1129,7 @@ def browser_control(
                                           _SEARCH_ENGINES["google"])
             nav_url = base + params.get("query", "").replace(" ", "+")
         else:
-            nav_url = params.get("url", "").strip()
+            nav_url = (params.get("url") or params.get("target") or params.get("query", "")).strip()
 
         result = _open_native(nav_url, browser)
         if result.startswith("Opened") and nav_url:
@@ -1139,36 +1139,50 @@ def browser_control(
 
     # ── Interactive actions (click/type/read…) ───────────────────────────────
     # These require a physically controllable browser; if playwright automation session
-    # is available, use it. Otherwise, seamless UIA bridge to inspect/click/type directly in Edge!
+    # is available, use it. Otherwise, seamless UIA bridge to inspect/click/type directly in Chrome/Edge/Firefox!
     if not _registry.has(browser) and _OS == "Windows":
-        # Check if Microsoft Edge is running on desktop and we can interact via Windows UIA
         try:
             from actions import windows_uia
             if windows_uia.is_available():
-                edge_win = windows_uia._get_edge_window()
-                if edge_win:
+                # Find any open browser window (Chrome, Edge, Brave, Opera, Firefox)
+                browser_win = None
+                active_win = windows_uia.get_active_window()
+                if active_win.get("status") == "success":
+                    pname = active_win.get("process_name", "").lower()
+                    if any(b in pname for b in ("chrome", "msedge", "edge", "brave", "opera", "firefox")):
+                        browser_win = active_win.get("wrapper")
+
+                if not browser_win:
+                    for bname in ("chrome", "msedge", "edge", "brave", "opera", "firefox"):
+                        browser_win = windows_uia.find_window_by_name(bname)
+                        if browser_win:
+                            break
+
+                if browser_win:
+                    target_text = params.get("text") or params.get("description") or params.get("selector") or params.get("name", "")
                     if action in ("click", "smart_click"):
-                        target_text = params.get("text") or params.get("description") or params.get("selector")
                         if target_text:
-                            click_res = windows_uia.click_element(target_text, window=edge_win)
+                            click_res = windows_uia.click_element(target_text, window=browser_win)
                             if click_res.get("status") in ("done", "success"):
-                                return f"Clicked '{target_text}' in Microsoft Edge."
+                                return outcome.done("browser_control", action="click", target=target_text, verified=True)
+                            else:
+                                return outcome.failed("browser_control", f"Could not click '{target_text}': {click_res.get('reason')}")
                     elif action in ("type", "smart_type"):
                         text_to_type = params.get("text", "")
-                        target_field = params.get("selector") or params.get("description")
-                        type_res = windows_uia.type_text(text_to_type, element_or_name=target_field, window=edge_win)
+                        target_field = target_text if target_text != text_to_type else ""
+                        type_res = windows_uia.type_text(text_to_type, element_or_name=target_field, window=browser_win)
                         if type_res.get("status") == "done":
-                            return f"Typed '{text_to_type}' into Microsoft Edge."
-                    elif action == "get_text":
-                        ins = windows_uia.inspect_window(window=edge_win, max_depth=3, limit=30)
+                            return outcome.done("browser_control", action="type", text=text_to_type, verified=True)
+                    elif action in ("get_text", "inspect", "inspect_page_elements"):
+                        ins = windows_uia.inspect_window(window=browser_win, max_depth=4, limit=50)
                         if ins.get("status") == "success":
                             names = [e["name"] for e in ins.get("elements", []) if e.get("name")]
-                            return f"Edge browser elements: {', '.join(names[:20])}"
+                            return outcome.done("browser_control", elements=names[:30], count=len(names))
                     elif action == "scroll":
-                        windows_uia.scroll(direction=params.get("direction", "down"), amount=int(params.get("amount", 500)), window=edge_win)
-                        return f"Scrolled {params.get('direction', 'down')} in Microsoft Edge."
+                        windows_uia.scroll(direction=params.get("direction", "down"), amount=int(params.get("amount", 500)), window=browser_win)
+                        return outcome.done("browser_control", action="scroll", direction=params.get("direction", "down"))
         except Exception as e:
-            print(f"[Browser] UIA fallback encountered: {e}")
+            print(f"[Browser] UIA browser interaction encountered: {e}")
 
     try:
         sess = _registry.get(browser)
