@@ -392,6 +392,44 @@ def _close_app(app_name: str, confirmed_index: int | None = None) -> str:
     if not app_name:
         return outcome.failed("close_app", "no application name was given")
 
+    is_windows = _get_os() == "windows"
+    lower_app = app_name.lower()
+
+    # Special handling for File Explorer:
+    # explorer.exe is the Windows shell process (desktop & taskbar) and is also
+    # an ancestor in the process tree of JARVIS, so killing or asking explorer.exe
+    # process would either harm the OS shell or be flagged as assistant self-process.
+    # Therefore, close the open File Explorer window instead.
+    if is_windows and any(tok in lower_app for tok in ("file explorer", "explorer", "folder", "directory")):
+        closed_win = False
+        try:
+            import win32gui, win32con
+            def _find_explorer_windows():
+                hwnds = []
+                def _enum(h, _):
+                    if win32gui.GetClassName(h) == "CabinetWClass" and win32gui.IsWindowVisible(h):
+                        hwnds.append(h)
+                    return True
+                win32gui.EnumWindows(_enum, None)
+                return hwnds
+
+            exp_hwnds = _find_explorer_windows()
+            if exp_hwnds:
+                for h in exp_hwnds:
+                    win32gui.PostMessage(h, win32con.WM_CLOSE, 0, 0)
+                closed_win = True
+        except Exception as e:
+            print(f"[ComputerControl] Explorer win32 close error: {e}")
+
+        if not closed_win and windows_uia.is_available():
+            uia_res = windows_uia.close_window("File Explorer")
+            if uia_res.get("status") == "success" or uia_res.get("verified"):
+                closed_win = True
+
+        if closed_win:
+            return outcome.done("close_app", app=app_name, closed="File Explorer", verified=True)
+        return outcome.failed("close_app", "No open File Explorer window was found to close.", app=app_name)
+
     if not appidentity._PSUTIL:
         return outcome.failed(
             "close_app",
@@ -403,6 +441,13 @@ def _close_app(app_name: str, confirmed_index: int | None = None) -> str:
     matches = appidentity.running(app_name)
 
     if not matches:
+        # Before failing, if on Windows and windows_uia is available, try closing window by title/name directly
+        # (useful for UWP apps or apps where process name doesn't match spoken name)
+        if is_windows and windows_uia.is_available():
+            uia_res = windows_uia.close_window(app_name)
+            if uia_res.get("status") == "success" or uia_res.get("verified"):
+                return outcome.done("close_app", app=app_name, closed=app_name, verified=True)
+
         # Nothing, or nothing that is not us. Telling those two apart matters:
         # "it is not running" and "the only thing by that name is me" need
         # completely different sentences.
@@ -450,20 +495,35 @@ def _close_app(app_name: str, confirmed_index: int | None = None) -> str:
         print(f"[ComputerControl] close_app: '{app_name}' -> {target_name} "
               f"(also matched: {', '.join(n for n, _ in ranked[1:5])})")
 
-    # Check if target is a special Windows application that shouldn't be terminated by process
-    is_windows = os_name == "Windows"
+    # Safety check if target is a special Windows application that shouldn't be terminated by process
     lower_target = target_name.lower()
     if is_windows and ("explorer" in lower_target or "file explorer" in lower_target):
         # Close the open File Explorer window (CabinetWClass), never kill explorer.exe
         closed_win = False
         try:
             import win32gui, win32con
-            hwnd = win32gui.FindWindow("CabinetWClass", None)
-            if hwnd:
-                win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+            def _find_explorer_windows():
+                hwnds = []
+                def _enum(h, _):
+                    if win32gui.GetClassName(h) == "CabinetWClass" and win32gui.IsWindowVisible(h):
+                        hwnds.append(h)
+                    return True
+                win32gui.EnumWindows(_enum, None)
+                return hwnds
+
+            exp_hwnds = _find_explorer_windows()
+            if exp_hwnds:
+                for h in exp_hwnds:
+                    win32gui.PostMessage(h, win32con.WM_CLOSE, 0, 0)
                 closed_win = True
         except Exception:
             pass
+
+        if not closed_win and windows_uia.is_available():
+            uia_res = windows_uia.close_window("File Explorer")
+            if uia_res.get("status") == "success" or uia_res.get("verified"):
+                closed_win = True
+
         if closed_win:
             return outcome.done("close_app", app=app_name, closed="File Explorer", verified=True)
         return outcome.failed("close_app", "No open File Explorer window was found to close.", app=app_name)
@@ -476,6 +536,17 @@ def _close_app(app_name: str, confirmed_index: int | None = None) -> str:
         else:
             still_open += 1
             reason = reason or detail
+
+    # Fallback for Windows: if request_close didn't succeed, attempt closing the top-level window via UIA
+    if closed == 0 and is_windows and windows_uia.is_available():
+        uia_res = windows_uia.close_window(target_name)
+        if not (uia_res.get("status") == "success" or uia_res.get("verified")):
+            uia_res = windows_uia.close_window(app_name)
+        if uia_res.get("status") == "success" or uia_res.get("verified"):
+            return outcome.done(
+                "close_app", app=app_name, closed=target_name,
+                processes=1, verified=True,
+            )
 
     if closed and not still_open:
         return outcome.done(
@@ -646,13 +717,13 @@ def computer_control(
                 int(params.get("x2", 0)), int(params.get("y2", 0)),
             )
 
-        if action == "hotkey":
-            raw  = params.get("keys", "")
+        if action in ("hotkey", "key_combination", "shortcut"):
+            raw  = params.get("keys") or params.get("key", "")
             keys = [k.strip() for k in raw.split("+")] if isinstance(raw, str) else raw
             return _hotkey(*keys)
 
-        if action == "press":
-            return _press(params.get("key", "enter"))
+        if action in ("press", "press_key", "key_press"):
+            return _press(params.get("key") or params.get("keys", "enter"))
 
         if action == "scroll":
             return _scroll(
@@ -767,11 +838,75 @@ def computer_control(
         if action == "focus_window":
             return _focus_window(params.get("title", ""))
 
-        if action in ("close_app", "close_application", "quit_app"):
+        if action in ("open_app", "open_application", "launch_app", "start_app"):
+            from actions.open_app import open_app
+            target_app = (
+                params.get("app_name")
+                or params.get("name")
+                or params.get("text")
+                or params.get("application")
+                or ""
+            )
+            return open_app({"name": target_app}, player=player)
+
+        if action in ("close_app", "close_application", "quit_app", "close_window", "exit_app", "kill_app"):
+            target_app = (
+                params.get("app_name")
+                or params.get("title")
+                or params.get("name")
+                or params.get("text")
+                or params.get("application")
+                or ""
+            )
             return _close_app(
-                params.get("app_name") or params.get("text") or "",
+                target_app,
                 confirmed_index=params.get("confirmed"),
             )
+
+        if action in ("minimize_app", "minimize_window", "minimize"):
+            target_app = (
+                params.get("app_name")
+                or params.get("title")
+                or params.get("name")
+                or params.get("text")
+                or params.get("application")
+                or ""
+            )
+            res = windows_uia.minimize_window(target_app)
+            return outcome.done("minimize_app", app=target_app, **res) if res.get("status") == "success" else outcome.failed("minimize_app", res.get("message", "Failed to minimize"))
+
+        if action in ("maximize_app", "maximize_window", "maximize"):
+            target_app = (
+                params.get("app_name")
+                or params.get("title")
+                or params.get("name")
+                or params.get("text")
+                or params.get("application")
+                or ""
+            )
+            res = windows_uia.maximize_window(target_app)
+            return outcome.done("maximize_app", app=target_app, **res) if res.get("status") == "success" else outcome.failed("maximize_app", res.get("message", "Failed to maximize"))
+
+        if action in ("switch_app", "switch_window", "focus_window", "activate_window"):
+            target_app = (
+                params.get("app_name")
+                or params.get("title")
+                or params.get("name")
+                or params.get("text")
+                or params.get("application")
+                or ""
+            )
+            res = windows_uia.switch_window(target_app)
+            return outcome.done("switch_app", app=target_app, **res) if res.get("status") == "success" else outcome.failed("switch_app", res.get("message", "Failed to switch window"))
+
+        if action in ("list_running_apps", "list_applications", "running_apps", "open_apps"):
+            wins = windows_uia.list_open_windows()
+            titles = [w["title"] for w in wins if w.get("title")]
+            return outcome.done("list_running_apps", count=len(titles), applications=titles[:15], windows=wins)
+
+        if action in ("get_active_window", "active_window", "foreground_window"):
+            act = windows_uia.get_active_window()
+            return outcome.done("get_active_window", **act)
 
         if action == "random_data":
             dt     = params.get("type", "name")
@@ -799,41 +934,31 @@ def computer_control(
 TOOL = {
     "name": "computer_control",
     "description": (
-        "Direct computer control: type, click, hotkeys, scroll, move mouse, "
+        "Direct computer and window control: type, click, hotkeys, scroll, move mouse, "
         "screenshots, Windows UI Automation (accurate accessible clicking & typing, "
         "inspecting windows, opening folders in File Explorer without coordinate guessing), "
-        "find elements on screen, and CLOSE an application. "
-        "Use action='uia_open' or 'screen_click' when the user asks to open or click a specific "
-        "folder, file or UI element (e.g. 'Semester 5'). "
-        "Use action='close_app' with 'app_name' whenever the user asks to "
-        "close, quit or exit a program - 'close Spotify', 'quit Chrome'. "
-        "Always name the application in 'app_name'; there is no action that "
-        "closes 'whatever is in front', because that is usually the assistant. "
-        "To OPEN an application use the open_app tool instead. "
-        "Read the status the tool returns: 'done' means it was confirmed, "
-        "'unverified' means it was requested and could NOT be confirmed - say "
-        "so rather than claiming success - and 'ask' means nothing was done "
-        "and the question must go to the user first."
+        "close_app, minimize_app, maximize_app, switch_app, list_running_apps, and get_active_window. "
+        "Use action='close_app' with 'app_name' to close a program (e.g. 'Notepad', 'Spotify'). "
+        "Use action='minimize_app' with 'app_name' to minimize a window. "
+        "Use action='maximize_app' with 'app_name' to maximize a window. "
+        "Use action='switch_app' with 'app_name' to bring a window to the front. "
+        "Use action='list_running_apps' when asked what applications are open. "
+        "Use action='get_active_window' to identify the foreground active window. "
+        "To OPEN an application use the open_app tool instead."
     ),
-    # Used in place of `description` only when a small model is on a tool
-    # budget - Gemini still gets the full text. See providers/schema.py.
     "brief": (
-        "Controls the computer: UI automation, click, type, hotkeys, scroll, screenshots, close_app, and open_app."
+        "Controls the computer: UI automation, click, type, hotkeys, close_app, minimize_app, maximize_app, switch_app, list_running_apps."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "type | smart_type | click | double_click | right_click | hotkey | press | scroll | move | copy | paste | screenshot | wait | clear_field | focus_window | close_app | screen_find | screen_click | uia_click | uia_open | uia_find | uia_inspect | uia_type | uia_scroll | uia_active_window | random_data | user_data"
+                "description": "click | double_click | right_click | type | key_combination | hotkey | scroll | close_app | minimize_app | maximize_app | switch_app | list_running_apps | get_active_window | screen_click | uia_open | uia_find | uia_click | wait",
             },
             "app_name": {
                 "type": "STRING",
-                "description": (
-                    "For close_app: the application to close, named as the "
-                    "user said it. Any application running on the machine "
-                    "works - there is no fixed list. Never leave this empty."
-                )
+                "description": "Application name for close_app, minimize_app, maximize_app, switch_app (e.g. 'Notepad', 'Spotify', 'Chrome').",
             },
             "confirmed": {
                 "type": "BOOLEAN",

@@ -1,0 +1,151 @@
+{
+  "id": "delete_file_shortcuts",
+  "name": "Delete File Shortcuts",
+  "description": "Deletes specific shortcut files selected by the user in File Explorer.",
+  "category": "application",
+  "application": "File Explorer",
+  "version": "1.0.0",
+  "intent_examples": [
+    "delete shortcuts in File Explorer",
+    "remove old shortcut files"
+  ],
+  "parameters": [
+    {
+      "name": "shortcut_1",
+      "type": "string",
+      "description": "Name of the first shortcut to delete",
+      "required": true,
+      "default": null,
+      "example": null
+    },
+    {
+      "name": "shortcut_1_id",
+      "type": "string",
+      "description": "Automation ID of the first shortcut",
+      "required": true,
+      "default": null,
+      "example": null
+    },
+    {
+      "name": "shortcut_2",
+      "type": "string",
+      "description": "Name of the second shortcut to delete",
+      "required": true,
+      "default": null,
+      "example": null
+    },
+    {
+      "name": "shortcut_2_id",
+      "type": "string",
+      "description": "Automation ID of the second shortcut",
+      "required": true,
+      "default": null,
+      "example": null
+    }
+  ],
+  "preconditions": [
+    "File Explorer is open showing files"
+  ],
+  "steps": [
+    {
+      "step_id": 1,
+      "thought": "Ensure File Explorer is active",
+      "tool": "open_app",
+      "parameters": {
+        "app_name": "Explorer"
+      },
+      "selector": null,
+      "verification": {
+        "type": "window_title_contains",
+        "target": "File Explorer",
+        "expected_value": "",
+        "timeout_seconds": 8.0
+      },
+      "recovery": {
+        "retry_count": 2,
+        "delay_between_retries": 1.2,
+        "reobserve_window": true
+      },
+      "is_sensitive": false
+    },
+    {
+      "step_id": 2,
+      "thought": "Select first shortcut file to delete",
+      "tool": "windows_uia",
+      "parameters": {
+        "action": "click",
+        "name": "{shortcut_1}",
+        "control_type": "ListItem",
+        "automation_id": "{shortcut_1_id}"
+      },
+      "selector": null,
+      "verification": {
+        "type": "element_visible",
+        "target": "{shortcut_1}",
+        "expected_value": "",
+        "timeout_seconds": 8.0
+      },
+      "recovery": {
+        "retry_count": 2,
+        "delay_between_retries": 1.2,
+        "reobserve_window": true
+      },
+      "is_sensitive": false
+    },
+    {
+      "step_id": 3,
+      "thought": "Select second shortcut file to delete while holding Ctrl",
+      "tool": "computer_control",
+      "parameters": {
+        "action": "hotkey",
+        "key": "ctrl+click"
+      },
+      "selector": null,
+      "verification": {
+        "type": "element_visible",
+        "target": "{shortcut_2}",
+        "expected_value": "",
+        "timeout_seconds": 8.0
+      },
+      "recovery": {
+        "retry_count": 2,
+        "delay_between_retries": 1.2,
+        "reobserve_window": true
+      },
+      "is_sensitive": false
+    },
+    {
+      "step_id": 4,
+      "thought": "Delete selected files",
+      "tool": "computer_control",
+      "parameters": {
+        "action": "key",
+        "key": "delete"
+      },
+      "selector": null,
+      "verification": {
+        "type": "element_not_visible",
+        "target": "{shortcut_1}",
+        "expected_value": "",
+        "timeout_seconds": 8.0
+      },
+      "recovery": {
+        "retry_count": 2,
+        "delay_between_retries": 1.2,
+        "reobserve_window": true
+      },
+      "is_sensitive": false
+    }
+  ],
+  "tool_dependencies": [
+    "computer_control",
+    "open_app",
+    "windows_uia"
+  ],
+  "permissions": "destructive",
+  "status": "approved",
+  "created_at": "2026-11-09T19:38:36.881909",
+  "last_validated_at": null,
+  "last_used_at": null,
+  "author": "user_demonstration"
+}

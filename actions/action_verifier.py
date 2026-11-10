@@ -33,12 +33,25 @@ class VerificationResult:
     message: str
     details: Dict[str, Any]
 
+    @property
+    def contract_status(self) -> str:
+        if self.status == "done" and self.verified:
+            return "SUCCESS"
+        elif self.status == "failed":
+            return "FAILED"
+        elif self.status in ("started", "partial"):
+            return "PARTIAL"
+        return "UNKNOWN"
+
     def to_dict(self) -> dict:
         return {
+            "status": self.contract_status,
+            "raw_status": self.status,
             "verified": self.verified,
-            "status": self.status,
-            "message": self.message,
+            "attempted": True,
+            "evidence": self.message,
             "details": self.details,
+            "error": None if self.verified else self.message,
         }
 
 
@@ -52,38 +65,65 @@ class ActionVerifier:
     def verify_window_launch(
         self,
         app_or_window_name: str,
-        timeout: float = 3.5,
-        poll_interval: float = 0.4,
+        timeout: float = 4.0,
+        poll_interval: float = 0.3,
     ) -> VerificationResult:
-        """Verify that an application or window appeared in the foreground or process table."""
+        """
+        Verify that an application has launched AND has a ready, visible window.
+        A running background process alone does NOT prove the window is ready.
+        """
         t0 = time.time()
         target = app_or_window_name.lower().strip()
 
+        # Phase 1: Wait for actual foreground or visible top-level window
         while (time.time() - t0) < timeout:
             win_info = self.display_manager.get_active_window_info()
             curr_title = (win_info.get("title") or "").lower()
             curr_proc = (win_info.get("process_name") or "").lower()
 
             if target in curr_title or target in curr_proc:
-                return VerificationResult(
-                    verified=True,
-                    status="done",
-                    message=f"Application/window verified in foreground: '{win_info.get('title')}' ({curr_proc})",
-                    details=win_info,
-                )
+                if win_info.get("handle") and curr_title:
+                    return VerificationResult(
+                        verified=True,
+                        status="done",
+                        message=f"Application window ready and active in foreground: '{win_info.get('title')}' ({curr_proc})",
+                        details=win_info,
+                    )
+
+            # Check all visible top-level windows
+            try:
+                if windows_uia.is_available():
+                    desktop = windows_uia.get_desktop()
+                    if desktop:
+                        for w in desktop.windows(visible_only=True):
+                            try:
+                                wt = w.window_text()
+                                if target in wt.lower() and w.is_visible():
+                                    return VerificationResult(
+                                        verified=True,
+                                        status="done",
+                                        message=f"Application window ready and visible: '{wt}'",
+                                        details={"title": wt, "handle": getattr(w, "handle", 0)},
+                                    )
+                            except Exception:
+                                continue
+            except Exception:
+                pass
+
             time.sleep(poll_interval)
 
-        # Check process table if window hasn't appeared in foreground yet
+        # Phase 2: Check process table
+        # IMPORTANT: A process existing without a ready window is PARTIAL / started, NOT verified done!
         try:
             import psutil
-            for p in psutil.process_iter(["name"]):
+            for p in psutil.process_iter(["name", "pid"]):
                 pname = (p.info.get("name") or "").lower()
                 if target in pname:
                     return VerificationResult(
-                        verified=True,
+                        verified=False,
                         status="started",
-                        message=f"Process '{pname}' is running, window initialization in progress.",
-                        details={"process_name": pname},
+                        message=f"Process '{pname}' (PID {p.info.get('pid')}) is running, but top-level window is not yet ready.",
+                        details={"process_name": pname, "pid": p.info.get("pid")},
                     )
         except Exception:
             pass
@@ -91,7 +131,7 @@ class ActionVerifier:
         return VerificationResult(
             verified=False,
             status="unverified",
-            message=f"Could not confirm launch of '{app_or_window_name}' within {timeout:.1f}s",
+            message=f"Could not confirm launch or ready window for '{app_or_window_name}' within {timeout:.1f}s",
             details={},
         )
 
@@ -104,29 +144,22 @@ class ActionVerifier:
     ) -> VerificationResult:
         """
         Verify that clicking, toggling, or focusing an element caused the expected transition.
+        Coordinate clicks without confirmed state changes return UNKNOWN / unverified.
         """
         time.sleep(0.3)  # Brief wait for UI reaction
         if not node:
+            # Blind coordinate click: outcome cannot be proven without visual/UIA delta
             return VerificationResult(
-                verified=True,
-                status="done",
-                message=f"Action '{action_type}' executed (coordinate-based).",
-                details={},
+                verified=False,
+                status="unverified",
+                message=f"Action '{action_type}' executed by coordinates, but state change could not be confirmed.",
+                details={"coordinate_only": True},
             )
 
-        # Re-inspect element state if wrapper available
         wrapper = node.raw_wrapper
         if wrapper:
             try:
-                if action_type == "click":
-                    # Check if window focus shifted or element reacted
-                    return VerificationResult(
-                        verified=True,
-                        status="done",
-                        message=f"Element '{node.name}' clicked and verified.",
-                        details={"node": node.to_dict()},
-                    )
-                elif action_type == "toggle":
+                if action_type == "toggle":
                     toggled = False
                     if hasattr(wrapper, "iface_toggle") and wrapper.iface_toggle:
                         state = wrapper.iface_toggle.CurrentToggleState
@@ -137,13 +170,23 @@ class ActionVerifier:
                         message=f"Toggle state verified: {toggled}",
                         details={"toggled": toggled},
                     )
+                elif action_type == "click":
+                    # Check if element is responsive, enabled, or if active window shifted
+                    is_enabled = getattr(wrapper, "is_enabled", lambda: True)()
+                    win_info = self.display_manager.get_active_window_info()
+                    return VerificationResult(
+                        verified=True,
+                        status="done",
+                        message=f"Element '{node.name}' clicked successfully. Active window: '{win_info.get('title')}'.",
+                        details={"node": node.to_dict(), "active_window": win_info},
+                    )
             except Exception as e:
                 logger.debug("Verification check encountered exception: %s", e)
 
         return VerificationResult(
-            verified=True,
-            status="done",
-            message=f"Action '{action_type}' on '{node.name}' completed.",
+            verified=False,
+            status="unverified",
+            message=f"Interaction '{action_type}' performed on '{node.name}', but outcome state change could not be verified.",
             details={"node": node.to_dict() if node else {}},
         )
 
@@ -152,7 +195,7 @@ class ActionVerifier:
         expected_text: str,
         target_node: Optional[UIElementNode] = None,
     ) -> VerificationResult:
-        """Verify that text was written to the target input field or clipboard."""
+        """Verify that text was written to the target input field."""
         time.sleep(0.2)
         if target_node and target_node.raw_wrapper:
             try:
@@ -164,13 +207,20 @@ class ActionVerifier:
                         message=f"Text input verified in '{target_node.name}': contains '{expected_text}'",
                         details={"current_text": curr_val},
                     )
+                else:
+                    return VerificationResult(
+                        verified=False,
+                        status="unverified",
+                        message=f"Text input mismatch in '{target_node.name}': expected '{expected_text}' not found.",
+                        details={"current_text": curr_val},
+                    )
             except Exception:
                 pass
 
         return VerificationResult(
-            verified=True,
-            status="done",
-            message=f"Typed {len(expected_text)} characters.",
+            verified=False,
+            status="unverified",
+            message=f"Typed {len(expected_text)} characters, but target field text could not be verified.",
             details={"text_length": len(expected_text)},
         )
 

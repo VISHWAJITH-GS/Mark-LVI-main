@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "updated_at": "2026-11-07T16:56:33.025749",
+  "updated_at": "2026-11-09T19:38:41.356101",
   "skills": {
     "test_mock_123": {
       "id": "test_mock_123",
@@ -12,6 +12,28 @@
       "permissions": "normal",
       "file": "skills/application_skills/test_mock_123.json",
       "updated_at": "2026-11-07T15:36:03.968099"
+    },
+    "delete_file_shortcuts": {
+      "id": "delete_file_shortcuts",
+      "name": "Delete File Shortcuts",
+      "category": "application",
+      "application": "File Explorer",
+      "version": "1.0.0",
+      "status": "approved",
+      "permissions": "destructive",
+      "file": "skills/application_skills/delete_file_shortcuts.json",
+      "updated_at": "2026-11-09T19:38:36.932238"
+    },
+    "delete_file_explorer_shortcuts": {
+      "id": "delete_file_explorer_shortcuts",
+      "name": "Delete File Explorer Shortcuts",
+      "category": "application",
+      "application": "File Explorer",
+      "version": "1.0.0",
+      "status": "approved",
+      "permissions": "destructive",
+      "file": "skills/application_skills/delete_file_explorer_shortcuts.json",
+      "updated_at": "2026-11-09T19:38:41.356095"
     }
   }
 }

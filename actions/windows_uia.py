@@ -1052,6 +1052,153 @@ def find_window_by_name(name: str) -> Optional[Any]:
     return None
 
 
+def list_open_windows(visible_only: bool = True) -> List[dict]:
+    """Enumerate all open top-level application windows with titles, handles, and process names."""
+    results = []
+    if not is_available():
+        return results
+    desktop = get_desktop()
+    if not desktop:
+        return results
+    try:
+        for w in desktop.windows(visible_only=visible_only):
+            try:
+                title = w.window_text().strip()
+                if not title or title in ("Default IME", "MSCTFIME UI", "Program Manager", "Angle"):
+                    continue
+                h = getattr(w, "handle", 0)
+                pid = 0
+                pname = ""
+                if h and win32process:
+                    try:
+                        _, pid = win32process.GetWindowThreadProcessId(h)
+                        import psutil
+                        pname = psutil.Process(pid).name()
+                    except Exception:
+                        pass
+                results.append({
+                    "title": title,
+                    "handle": h,
+                    "pid": pid,
+                    "process_name": pname,
+                    "is_visible": w.is_visible() if hasattr(w, "is_visible") else True,
+                })
+            except Exception:
+                continue
+    except Exception as e:
+        print(f"[WindowsUIA] list_open_windows error: {e}")
+    return results
+
+
+def switch_window(title_or_app: str) -> dict:
+    """Bring requested window to foreground and verify focus."""
+    if not title_or_app:
+        return {"status": "failed", "message": "No window title specified."}
+    target = find_window_by_name(title_or_app)
+    if not target:
+        return {"status": "failed", "message": f"Could not find open window matching '{title_or_app}'."}
+    try:
+        h = getattr(target, "handle", 0)
+        if h and win32gui and win32con:
+            # Restore if minimized
+            if win32gui.IsIconic(h):
+                win32gui.ShowWindow(h, win32con.SW_RESTORE)
+            win32gui.SetForegroundWindow(h)
+        else:
+            target.set_focus()
+        time.sleep(0.3)
+        act = get_active_window()
+        cur_title = act.get("title", "")
+        verified = (title_or_app.lower() in cur_title.lower()) or (act.get("handle") == h)
+        return {
+            "status": "success" if verified else "partial",
+            "message": f"Switched to '{cur_title}'",
+            "verified": verified,
+            "title": cur_title,
+        }
+    except Exception as e:
+        return {"status": "failed", "message": f"Failed to switch window: {e}"}
+
+
+def minimize_window(title: str = "") -> dict:
+    """Minimize the active or specified window."""
+    target = find_window_by_name(title) if title else None
+    if not target:
+        act = get_active_window()
+        target = act.get("wrapper") if act.get("status") == "success" else None
+    if not target:
+        return {"status": "failed", "message": "No window found to minimize."}
+    try:
+        h = getattr(target, "handle", 0)
+        win_title = target.window_text() if hasattr(target, "window_text") else str(title)
+        if h and win32gui and win32con:
+            win32gui.ShowWindow(h, win32con.SW_MINIMIZE)
+        elif hasattr(target, "minimize"):
+            target.minimize()
+        time.sleep(0.3)
+        # Verify minimized state
+        is_min = win32gui.IsIconic(h) if (h and win32gui) else True
+        return {
+            "status": "success" if is_min else "partial",
+            "message": f"Window '{win_title}' minimized.",
+            "verified": bool(is_min),
+        }
+    except Exception as e:
+        return {"status": "failed", "message": f"Failed to minimize window: {e}"}
+
+
+def maximize_window(title: str = "") -> dict:
+    """Maximize the active or specified window."""
+    target = find_window_by_name(title) if title else None
+    if not target:
+        act = get_active_window()
+        target = act.get("wrapper") if act.get("status") == "success" else None
+    if not target:
+        return {"status": "failed", "message": "No window found to maximize."}
+    try:
+        h = getattr(target, "handle", 0)
+        win_title = target.window_text() if hasattr(target, "window_text") else str(title)
+        if h and win32gui and win32con:
+            win32gui.ShowWindow(h, win32con.SW_MAXIMIZE)
+        elif hasattr(target, "maximize"):
+            target.maximize()
+        time.sleep(0.3)
+        return {
+            "status": "success",
+            "message": f"Window '{win_title}' maximized.",
+            "verified": True,
+        }
+    except Exception as e:
+        return {"status": "failed", "message": f"Failed to maximize window: {e}"}
+
+
+def close_window(title: str = "", force: bool = False) -> dict:
+    """Close the active or specified window with verification."""
+    target = find_window_by_name(title) if title else None
+    if not target:
+        act = get_active_window()
+        target = act.get("wrapper") if act.get("status") == "success" else None
+    if not target:
+        return {"status": "failed", "message": "No window found to close."}
+    try:
+        h = getattr(target, "handle", 0)
+        win_title = target.window_text() if hasattr(target, "window_text") else str(title)
+        if h and win32gui and win32con:
+            win32gui.PostMessage(h, win32con.WM_CLOSE, 0, 0)
+        elif hasattr(target, "close"):
+            target.close()
+        time.sleep(0.5)
+        # Verify window is closed
+        closed = not win32gui.IsWindow(h) if (h and win32gui) else True
+        return {
+            "status": "success" if closed else "partial",
+            "message": f"Window '{win_title}' closed." if closed else f"Close request sent for '{win_title}'.",
+            "verified": bool(closed),
+        }
+    except Exception as e:
+        return {"status": "failed", "message": f"Failed to close window: {e}"}
+
+
 def open_file_explorer_item(
     item_name: str,
     window: Optional[Any] = None,

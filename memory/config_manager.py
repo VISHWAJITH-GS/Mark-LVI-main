@@ -176,6 +176,39 @@ def save_push_to_talk_enabled(enabled: bool) -> None:
     _save_flag("push_to_talk_enabled", enabled)
 
 
+def get_listening_shortcut() -> list[str]:
+    """Global keyboard shortcut for toggling listening. Default Ctrl+Alt+J."""
+    v = load_api_keys().get("global_listening_shortcut")
+    if isinstance(v, list) and v:
+        return [str(k).lower() for k in v]
+    return ["ctrl", "alt", "j"]
+
+
+def save_listening_shortcut(chord: list[str]) -> None:
+    _save_flag("global_listening_shortcut", [str(k).lower() for k in chord])
+
+
+def get_emergency_stop_shortcut() -> list[str]:
+    """Global keyboard shortcut for immediate speech interruption. Default Ctrl+Alt+K."""
+    v = load_api_keys().get("global_emergency_stop_shortcut")
+    if isinstance(v, list) and v:
+        return [str(k).lower() for k in v]
+    return ["ctrl", "alt", "k"]
+
+
+def save_emergency_stop_shortcut(chord: list[str]) -> None:
+    _save_flag("global_emergency_stop_shortcut", [str(k).lower() for k in chord])
+
+
+def get_mouse_gesture_enabled() -> bool:
+    """Simultaneous Left+Right mouse button gesture to toggle listening."""
+    return load_api_keys().get("global_mouse_gesture_enabled", True)
+
+
+def save_mouse_gesture_enabled(enabled: bool) -> None:
+    _save_flag("global_mouse_gesture_enabled", bool(enabled))
+
+
 HUD_STYLES = ("face", "core")
 
 

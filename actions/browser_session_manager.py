@@ -106,12 +106,15 @@ class BrowserSessionManager:
     def _run_loop(self):
         try:
             if _OS == "Windows":
-                loop = asyncio.ProactorEventLoop()
+                try:
+                    loop = asyncio.ProactorEventLoop()
+                except Exception:
+                    loop = asyncio.new_event_loop()
             else:
                 loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             self._loop = loop
-            loop.call_soon(self._ready.set)
+            self._ready.set()
             loop.run_forever()
         except Exception as e:
             logger.error("Browser event loop crashed: %s", e)
@@ -119,7 +122,11 @@ class BrowserSessionManager:
 
     def run_sync(self, coro, timeout: float = 45.0) -> Any:
         self._ensure_event_loop()
-        if not self._loop:
+        if not self._loop or not self._loop.is_running():
+            try:
+                coro.close()
+            except Exception:
+                pass
             raise RuntimeError("Browser event loop could not be started.")
 
         async def _run_with_timeout():

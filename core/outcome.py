@@ -105,8 +105,12 @@ class ActionResult:
     data: dict = field(default_factory=dict)
     error: Optional[str] = None
     duration_ms: float = 0.0
+    evidence: Optional[str] = None
+    attempted: bool = True
 
     def __post_init__(self):
+        if not self.evidence and self.message:
+            self.evidence = self.message
         if self.status not in ALLOWED_STATUSES:
             if self.status in ("ask", "confirm"):
                 self.status = STATUS_NEEDS_CONFIRMATION
@@ -198,8 +202,30 @@ class ActionResult:
             duration_ms=duration_ms,
         )
 
-    def to_dict(self) -> dict:
+    @property
+    def contract_status(self) -> str:
+        """Standard status for verification contract: SUCCESS, FAILED, PARTIAL, UNKNOWN."""
+        if self.status == STATUS_DONE and self.verified and self.success:
+            return "SUCCESS"
+        elif self.status == STATUS_FAILED or (not self.success and self.status not in (STATUS_UNVERIFIED, STATUS_STARTED)):
+            return "FAILED"
+        elif self.status in (STATUS_STARTED, "partial", STATUS_NEEDS_CONFIRMATION):
+            return "PARTIAL"
+        else:
+            return "UNKNOWN"
+
+    def to_contract_dict(self) -> dict:
         return {
+            "status": self.contract_status,
+            "action": self.action,
+            "attempted": bool(self.attempted),
+            "verified": bool(self.verified),
+            "evidence": self.evidence or self.message or ("Verified." if self.verified else "Verification unconfirmed."),
+            "error": self.error,
+        }
+
+    def to_dict(self) -> dict:
+        d = {
             "status": self.status,
             "action": self.action,
             "success": self.success,
@@ -208,7 +234,11 @@ class ActionResult:
             "data": self.data,
             "error": self.error,
             "duration_ms": self.duration_ms,
+            "evidence": self.evidence,
+            "attempted": self.attempted,
+            "contract_status": self.contract_status,
         }
+        return d
 
     def to_speech_text(self) -> str:
         if self.message:

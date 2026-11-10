@@ -187,12 +187,17 @@ AVAILABLE REGISTERED TOOLS:
 {tool_catalog}
 
 PREFERRED TOOL MAPPING:
+- Reminders: Use "reminder" with {{"action": "create" | "list" | "edit" | "delete" | "complete", "title": "...", "date_time": "..."}}
+- WhatsApp: Use "whatsapp_automation" with {{"action": "send_message", "contact": "...", "message": "..."}} or "whatsapp_read" with {{"action": "read_chat" | "read_latest" | "summarize", "contact": "..."}}
+- Windows System Settings: Use "windows_control" with {{"action": "wifi_status" | "enable_wifi" | "disable_wifi" | "list_wifi_networks" | "connect_wifi" | "disconnect_wifi" | "bluetooth_status" | "enable_bluetooth" | "disable_bluetooth" | "list_bluetooth_devices" | "pair_bluetooth_device" | "connect_bluetooth" | "disconnect_bluetooth" | "get_volume" | "set_volume" | "mute" | "unmute" | "get_brightness" | "set_brightness" | "battery_status"}}
+- Application Management: Use "computer_control" with {{"action": "open_app" | "close_app" | "minimize_app" | "maximize_app" | "switch_app" | "list_running_apps" | "get_active_window", "app_name": "..."}}
+- Music/Media: Use "media_control" with {{"action": "play" | "search" | "pause" | "resume" | "next" | "previous" | "set_volume" | "get_current_playing_media", "query": "..."}}
+- Web Search & Research: Use "web_search" with {{"action": "search" | "read" | "summarize" | "open", "query": "...", "url": "..."}}
+- Windows Notifications: Use "notification_center" with {{"action": "read_recent" | "summarize" | "filter_by_app", "app_name": "..."}}
+- LeetCode Assistant: Use "leetcode_assistant" with {{"action": "get_hint" | "explain_approach" | "debug_code" | "analyze_complexity" | "generate_edge_cases", "code": "...", "language": "..."}}
 - Web Testing / QA: Use "browser_qa" with {{"url": "...", "project_dir": "..."}}
 - Desktop Clicks / Keyboard: Use "computer_use" with {{"action": "click_element" | "click_cursor_position" | "type_text" | "press_key" | "scroll", ...}}
-- Application Launching: Use "open_app" with {{"app_name": "..."}} or "computer_use" with {{"action": "open_application", "app_name": "..."}}
 - File Navigation: Use "windows_uia" or "computer_use" with {{"action": "uia_open", "name": "..."}}
-- Music/Media: Use "spotify_control" with {{"action": "play", "query": "..."}}
-- System Controls: Use "windows_control" with {{"action": "...", "target": "..."}}
 - State Assertion: Use "verify_state" with {{"expected_window": "..."}}
 
 OUTPUT FORMAT:

@@ -75,7 +75,10 @@ from memory.config_manager     import (
     get_brief_enabled, get_media_resolution, get_proactive_audio_enabled,
     get_push_to_talk_enabled, get_thinking_enabled, get_turn_tuning, get_voice,
     get_wake_word_enabled, save_wake_word_enabled,    get_input_device, get_output_device,
+    get_listening_shortcut, get_emergency_stop_shortcut, get_mouse_gesture_enabled,
 )
+from core.voice_state          import VoiceStateManager, VoiceState
+from core.global_input         import GlobalInputController
 from core                     import gemini as _gemini
 from core.plugin_loader        import discover_plugins
 from core                      import undo as undo_stack
@@ -591,6 +594,8 @@ class JarvisLive:
         self._vision_last_time     = 0.0     # monotonic time of last screen_process call (cooldown guard)
         self._vision_busy          = False   # True while a vision capture/inject cycle is in flight
         self._interrupted          = False   # True while draining audio after user interrupt
+        self._in_interrupt         = False   # Re-entrancy guard for interrupt()
+        self._interrupt_lock       = threading.Lock()
         # Which engine is holding the conversation, and what it can do.
         # None means Gemini Live — the default and, unless somebody has gone to
         # the providers settings and chosen otherwise, always the case. Every
@@ -711,6 +716,22 @@ class JarvisLive:
         self.ui.on_wake_toggle   = self._ui_wake_toggle   # (enable: bool) -> str
         self.ui.on_wake_manual   = self._ui_wake_manual   # () -> toggle awake/asleep
         self.ui.on_wake_install  = self._ui_wake_install  # () -> (ok, msg)
+
+        # ── Central Voice State & Global Input Controller ─────────────────────
+        self.voice_state = VoiceStateManager(
+            initial_state=VoiceState.DISABLED if getattr(self.ui, "muted", False) else VoiceState.LISTENING,
+            on_state_change=self._on_voice_state_changed,
+            on_interrupt=None,
+        )
+
+        self._global_input = GlobalInputController(
+            on_toggle_listening=self.global_toggle_listening,
+            on_emergency_stop=self.global_emergency_stop,
+            listening_chord=get_listening_shortcut(),
+            emergency_chord=get_emergency_stop_shortcut(),
+            mouse_gesture_enabled=get_mouse_gesture_enabled(),
+        )
+        self._global_input.start()
 
     # ── Wake word: state machine ─────────────────────────────────────────────
 
@@ -891,10 +912,12 @@ class JarvisLive:
         self.request_reconnect(keep_context=False, reason="new voice")
 
     def _on_audio_device_change(self):
-        """Microphone or speaker changed. Both streams are opened inside the
-        session TaskGroup, so they can only be re-opened by rebuilding it —
-        but the conversation is kept, which is the whole reason resumption
-        landed before this feature did."""
+        """Microphone or speaker changed. Invalidate cache, reconnect session, and re-open streams."""
+        from core import audio_devices
+        audio_devices.invalidate_cache()
+        _in_name = get_input_device()
+        _out_name = get_output_device()
+        self.ui.write_log(f"SYS: Applying audio devices — Mic: '{_in_name or 'Default'}', Speaker: '{_out_name or 'Default'}'")
         self.request_reconnect(keep_context=True, reason="audio device")
 
     def _ensure_executor(self):
@@ -1074,33 +1097,87 @@ class JarvisLive:
 
     def interrupt(self) -> None:
         """Stop JARVIS mid-speech: drain queued audio and open mic immediately."""
-        self._interrupted = True
-        q = self.audio_in_queue
-        if q:
+        with self._interrupt_lock:
+            if self._in_interrupt:
+                return
+            self._in_interrupt = True
+        try:
+            was_speaking = bool(
+                self._is_speaking
+                or (hasattr(self, "voice_state") and (self.voice_state.is_speaking or self.voice_state.is_processing))
+            )
+            self._interrupted = True
+            if hasattr(self, "voice_state"):
+                self.voice_state.emergency_stop_speech()
+            q = self.audio_in_queue
             drained = 0
-            while True:
+            if q:
+                while True:
+                    try:
+                        q.get_nowait()
+                        drained += 1
+                    except Exception:
+                        break
+                if drained:
+                    print(f"[JARVIS] ✋ Interrupted — {drained} audio chunks discarded")
+            self.set_speaking(False)
+            # The words we were about to mouth are never going to be spoken now.
+            self._visemes.reset()
+            self._play_cursor = 0.0     # next batch starts a fresh timeline
+            if self._turn_done_event:
+                self._turn_done_event.clear()
+            # Draining the queue stops the speakers, but a local engine is still
+            # generating the rest of the answer and would keep filling it back up.
+            # Live has nothing to cancel here — the server stops on its own.
+            if self._engine is not None:
                 try:
-                    q.get_nowait()
-                    drained += 1
+                    self._engine.interrupt()
                 except Exception:
-                    break
-            if drained:
-                print(f"[JARVIS] ✋ Interrupted — {drained} audio chunks discarded")
-        self.set_speaking(False)
-        # The words we were about to mouth are never going to be spoken now.
-        self._visemes.reset()
-        self._play_cursor = 0.0     # next batch starts a fresh timeline
-        if self._turn_done_event:
-            self._turn_done_event.clear()
-        # Draining the queue stops the speakers, but a local engine is still
-        # generating the rest of the answer and would keep filling it back up.
-        # Live has nothing to cancel here — the server stops on its own.
-        if self._engine is not None:
-            try:
-                self._engine.interrupt()
-            except Exception:
-                pass
-        self.ui.write_log("SYS: Interrupted — listening...")
+                    pass
+            # Only log in activity log if speech or audio processing was actually interrupted
+            if was_speaking or drained > 0:
+                self.ui.write_log("SYS: Interrupted — speech stopped.")
+        finally:
+            with self._interrupt_lock:
+                self._in_interrupt = False
+
+    def global_toggle_listening(self) -> None:
+        """System-wide global listening toggle (Ctrl + Alt + J or L+R Mouse Gesture)."""
+        new_state = self.voice_state.toggle_listening()
+        is_disabled = (new_state == VoiceState.DISABLED)
+        # Sync UI muted state thread-safely
+        self.ui.muted = is_disabled
+        if is_disabled:
+            self.interrupt()
+            if self.out_queue:
+                while not self.out_queue.empty():
+                    try:
+                        self.out_queue.get_nowait()
+                    except Exception:
+                        break
+            self.ui.write_log("SYS: 🔇 Listening DISABLED globally.")
+        else:
+            self.ui.write_log("SYS: 🎙 Listening ENABLED globally.")
+
+    def global_emergency_stop(self) -> None:
+        """System-wide global emergency speech interruption (Ctrl + Alt + K)."""
+        was_speaking = bool(
+            self._is_speaking
+            or (hasattr(self, "voice_state") and (self.voice_state.is_speaking or self.voice_state.is_processing))
+        )
+        self.interrupt()
+        if was_speaking:
+            self.ui.write_log("SYS: 🛑 Emergency stop — speech interrupted.")
+
+    def _on_voice_state_changed(self, old_state: VoiceState, new_state: VoiceState) -> None:
+        if new_state == VoiceState.DISABLED:
+            self.ui.set_state("MUTED")
+        elif new_state == VoiceState.LISTENING:
+            self.ui.set_state("LISTENING")
+        elif new_state == VoiceState.PROCESSING:
+            self.ui.set_state("PROCESSING")
+        elif new_state == VoiceState.SPEAKING:
+            self.ui.set_state("SPEAKING")
 
     def speak(self, text: str):
         if not self._loop or not self.session:
@@ -1115,7 +1192,10 @@ class JarvisLive:
 
     def speak_error(self, tool_name: str, error: str):
         short = str(error)[:120]
-        self.ui.write_log(f"ERR: {tool_name} — {short}")
+        try:
+            self.ui.write_log(f"ERR: {tool_name} — {short}")
+        except Exception:
+            pass
         self.speak(f"Sir, {tool_name} encountered an error. {short}")
 
     def _build_config(self) -> types.LiveConnectConfig:
@@ -1454,7 +1534,15 @@ class JarvisLive:
                     args["mode"] = "improve"
                 _ctx = {"player": self.ui, "speak": self.speak,
                         "response": None, "session_memory": None}
-                r = await loop.run_in_executor(None, lambda: self._action_registry.run(name, args, _ctx))
+                self._ensure_executor()
+                try:
+                    r = await loop.run_in_executor(None, lambda: self._action_registry.run(name, args, _ctx))
+                except RuntimeError as re_err:
+                    if "shutdown" in str(re_err).lower():
+                        self._ensure_executor()
+                        r = await loop.run_in_executor(None, lambda: self._action_registry.run(name, args, _ctx))
+                    else:
+                        raise
                 result = r or "Done."
                 # web_search: mirror results to the on-screen content panel
                 if (name == "web_search" and r
@@ -1470,10 +1558,21 @@ class JarvisLive:
 
             else:
                 if self._plugin_registry.has(name):
-                    r = await loop.run_in_executor(
-                        None,
-                        lambda: self._plugin_registry.run(name, args, player=self.ui, session_memory=None)
-                    )
+                    self._ensure_executor()
+                    try:
+                        r = await loop.run_in_executor(
+                            None,
+                            lambda: self._plugin_registry.run(name, args, player=self.ui, session_memory=None)
+                        )
+                    except RuntimeError as re_err:
+                        if "shutdown" in str(re_err).lower():
+                            self._ensure_executor()
+                            r = await loop.run_in_executor(
+                                None,
+                                lambda: self._plugin_registry.run(name, args, player=self.ui, session_memory=None)
+                            )
+                        else:
+                            raise
                     result = r or "Done."
                 else:
                     result = f"Unknown tool: {name}"
@@ -1481,10 +1580,16 @@ class JarvisLive:
         except Exception as e:
             result = f"Tool '{name}' failed: {e}"
             traceback.print_exc()
-            self.speak_error(name, e)
+            try:
+                self.speak_error(name, e)
+            except Exception:
+                pass
 
-        if not self.ui.muted:
-            self.ui.set_state("LISTENING")
+        try:
+            if not self.ui.muted:
+                self.ui.set_state("LISTENING")
+        except Exception:
+            pass
 
         # How long the tool itself took. A long silence after a tool call is
         # either this number or the model's own time before and after it — and
@@ -1510,6 +1615,10 @@ class JarvisLive:
     async def _send_realtime(self):
         while True:
             msg = await self.out_queue.get()
+            if hasattr(self, "voice_state") and self.voice_state.is_disabled:
+                continue
+            if getattr(self.ui, "muted", False):
+                continue
             # Gemini 3.x Live rejects the old realtime_input.media_chunks field
             # (what `media=...` maps to) and closes the socket with a 1007. Send
             # mic / phone PCM through the new `audio` field instead. Queue items
@@ -1527,6 +1636,10 @@ class JarvisLive:
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
+            # ── Global Voice State & Mute Gate ───────────────────────────────
+            if (hasattr(self, "voice_state") and self.voice_state.is_disabled) or getattr(self.ui, "muted", False):
+                return
+
             # ── Wake-word gate ───────────────────────────────────────────────
             # While asleep, the mic audio NEVER goes to Gemini (nothing is
             # streamed, so JARVIS can't respond to speech not addressed to it and
@@ -1618,14 +1731,14 @@ class JarvisLive:
             _mic_name = get_input_device()
             _mic_dev  = audio_devices.resolve(_mic_name, "input")
             if _mic_dev is not None:
-                print(f"[JARVIS] 🎤 Input device: {_mic_name}")
+                print(f"[JARVIS] 🎤 Input device: {_mic_name} (index #{_mic_dev})")
+            else:
+                print(f"[JARVIS] 🎤 Input device: System Default")
             try:
                 _mic_stream = _open_mic(_mic_dev)
+                if _mic_dev is not None:
+                    self.ui.write_log(f"SYS: 🎤 Mic active: {_mic_name}")
             except Exception as _e:
-                # A device the picker listed but the driver will not open right
-                # now — exclusive mode, a webcam already in use, a virtual mic
-                # whose source went away. Chosen hardware failing must never
-                # mean the assistant cannot hear at all.
                 if _mic_dev is None:
                     raise
                 print(f"[JARVIS] ⚠️  Mic '{_mic_name}' failed: {_e} — using default")
@@ -1712,8 +1825,8 @@ class JarvisLive:
                             self._resume_handle = _sru.new_handle
 
                     if response.data:
-                        if self._interrupted:
-                            pass  # discard: interrupted
+                        if self._interrupted or (hasattr(self, "voice_state") and self.voice_state.is_disabled):
+                            pass  # discard: interrupted or disabled
                         else:
                             if self._turn_done_event and self._turn_done_event.is_set():
                                 self._turn_done_event.clear()
@@ -1721,8 +1834,9 @@ class JarvisLive:
                             # (24000 Hz × 2 bytes/sample × 0.05 s = 2400 bytes per slice)
                             _audio_data = response.data
                             _SLICE = 2400
+                            cur_gen = self.voice_state.generation_id if hasattr(self, "voice_state") else 0
                             for _i in range(0, len(_audio_data), _SLICE):
-                                self.audio_in_queue.put_nowait(_audio_data[_i : _i + _SLICE])
+                                self.audio_in_queue.put_nowait((cur_gen, _audio_data[_i : _i + _SLICE]))
 
                     if response.server_content:
                         sc = response.server_content
@@ -1749,6 +1863,8 @@ class JarvisLive:
                             if txt:
                                 in_buf.append(txt)
                                 self._last_user_speech = time.monotonic()
+                                if hasattr(self, "voice_state"):
+                                    self.voice_state.start_processing()
 
                         if sc.turn_complete:
                             if self._turn_done_event:
@@ -1761,6 +1877,8 @@ class JarvisLive:
                                 in_buf  = []
                                 out_buf = []
                                 self._visemes.reset()
+                                if hasattr(self, "voice_state") and not self.voice_state.is_disabled:
+                                    self.voice_state.finish_speaking()
                                 continue
 
                             full_in = " ".join(in_buf).strip()
@@ -1825,7 +1943,9 @@ class JarvisLive:
         _spk_name = get_output_device()
         _spk_dev  = audio_devices.resolve(_spk_name, "output")
         if _spk_dev is not None:
-            print(f"[JARVIS] 🔊 Output device: {_spk_name}")
+            print(f"[JARVIS] 🔊 Output device: {_spk_name} (index #{_spk_dev})")
+        else:
+            print(f"[JARVIS] 🔊 Output device: System Default")
 
         def _open_spk(dev):
             st = sd.RawOutputStream(
@@ -1840,6 +1960,8 @@ class JarvisLive:
 
         try:
             stream = _open_spk(_spk_dev)
+            if _spk_dev is not None:
+                self.ui.write_log(f"SYS: 🔊 Speaker active: {_spk_name}")
         except Exception as _e:
             # A chosen output that the host API accepts by name but refuses to
             # open (exclusive mode, wrong sample rate, device asleep) must not
@@ -1866,7 +1988,7 @@ class JarvisLive:
         try:
             while True:
                 try:
-                    chunk = await asyncio.wait_for(
+                    raw_item = await asyncio.wait_for(
                         self.audio_in_queue.get(),
                         timeout=0.1
                     )
@@ -1877,20 +1999,44 @@ class JarvisLive:
                         and self.audio_in_queue.empty()
                     ):
                         self.set_speaking(False)
+                        if hasattr(self, "voice_state") and not self.voice_state.is_disabled:
+                            self.voice_state.finish_speaking()
                         self._turn_done_event.clear()
                     continue
 
-                self.set_speaking(True)
+                # Check generation ID and voice state to prevent stale audio playback
+                cur_gen = self.voice_state.generation_id if hasattr(self, "voice_state") else 0
+                is_dis = (hasattr(self, "voice_state") and self.voice_state.is_disabled) or getattr(self.ui, "muted", False)
+                if isinstance(raw_item, tuple):
+                    item_gen, chunk = raw_item
+                    if item_gen != cur_gen or is_dis or self._interrupted:
+                        continue
+                else:
+                    chunk = raw_item
+                    if is_dis or self._interrupted:
+                        continue
 
-                # Batch all immediately-available chunks into one write to reduce
-                # thread-pool round-trips (was one asyncio.to_thread per 50ms slice).
-                # Cap at ~200 ms so interrupt() still stops audio within ~200 ms.
+                self.set_speaking(True)
+                if hasattr(self, "voice_state") and not is_dis:
+                    self.voice_state.start_speaking()
+
+                # Batch all immediately-available chunks of the current generation
                 batch = bytearray(chunk)
                 while len(batch) < 9600:   # 9600 bytes ≈ 200 ms at 24 kHz / 16-bit mono
                     try:
-                        batch.extend(self.audio_in_queue.get_nowait())
+                        next_item = self.audio_in_queue.get_nowait()
+                        if isinstance(next_item, tuple):
+                            next_gen, next_chunk = next_item
+                            if next_gen == cur_gen and not self._interrupted and not is_dis:
+                                batch.extend(next_chunk)
+                        else:
+                            if not self._interrupted and not is_dis:
+                                batch.extend(next_item)
                     except asyncio.QueueEmpty:
                         break
+
+                if self._interrupted or is_dis:
+                    continue
 
                 # Drive the HUD waveform and the avatar's mouth from JARVIS's
                 # own voice. The batch is up to 200 ms long, so we hand over a
@@ -2698,11 +2844,17 @@ def main():
         jarvis = JarvisLive(ui)
         try:
             asyncio.run(jarvis.run())
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
             print("\n🔴 Shutting down...")
+        except Exception as e:
+            if not getattr(ui, "_is_closed", False):
+                print(f"\n[JARVIS] Session stopped: {e}")
 
     threading.Thread(target=runner, daemon=True).start()
-    ui.root.mainloop()
+    try:
+        ui.root.mainloop()
+    finally:
+        ui._is_closed = True
 
 if __name__ == "__main__":
     main()

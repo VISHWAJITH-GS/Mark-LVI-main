@@ -2180,7 +2180,8 @@ class AudioDeviceOverlay(_HudOverlay):
             # startup, so opening this panel never blocks the Qt thread on the
             # host audio API.
             box.addItem(DEFAULT_LABEL, "")
-            for name in list_devices(kind):
+            # Re-scan device list so hotplugged Bluetooth devices appear immediately
+            for name in list_devices(kind, refresh=True):
                 box.addItem(name, name)
             idx = box.findData(current) if current else 0
             box.setCurrentIndex(idx if idx >= 0 else 0)
@@ -2251,6 +2252,16 @@ class AudioDeviceOverlay(_HudOverlay):
         lay.addSpacing(4)
         self._out_box = _row("SPEAKERS — what JARVIS talks through",
                              "output", get_output_device())
+
+        # ── Bluetooth Audio Profile & Quality Advisory ───────────────────────
+        self._profile_lbl = QLabel("")
+        self._profile_lbl.setWordWrap(True)
+        self._profile_lbl.setFont(QFont("Courier New", 7))
+        lay.addSpacing(2)
+        lay.addWidget(self._profile_lbl)
+        self._in_box.currentIndexChanged.connect(lambda _i: self._update_profile_info())
+        self._out_box.currentIndexChanged.connect(lambda _i: self._update_profile_info())
+        self._update_profile_info()
 
         # ── Output volume, beside the output device ──────────────────────────
         #
@@ -2438,21 +2449,46 @@ class AudioDeviceOverlay(_HudOverlay):
             f"color: {C.PRI if good else C.TEXT_DIM}; background: transparent;")
         label.setText(text)
 
+    def _update_profile_info(self):
+        in_name = self._in_box.currentData() or ""
+        out_name = self._out_box.currentData() or ""
+        try:
+            from core.audio_devices import is_bluetooth_device
+            in_bt = is_bluetooth_device(in_name)
+            out_bt = is_bluetooth_device(out_name)
+        except Exception:
+            in_bt = False
+            out_bt = False
+
+        if in_bt:
+            self._profile_lbl.setStyleSheet("color: #ffaa33; background: #201500; border: 1px solid #664400; border-radius: 3px; padding: 4px;")
+            self._profile_lbl.setText(
+                "⚠️ Bluetooth mic selected: Windows switches earphones to Hands-Free (HFP) mode. "
+                "Playback quality is reduced and background media (Spotify) may sound muffled. "
+                "Tip: Select Laptop Microphone for full A2DP stereo music quality."
+            )
+            self._profile_lbl.show()
+        elif out_bt:
+            self._profile_lbl.setStyleSheet(f"color: {C.PRI}; background: #001a18; border: 1px solid {C.PRI_DIM}; border-radius: 3px; padding: 4px;")
+            self._profile_lbl.setText(
+                "✓ High-fidelity A2DP stereo playback active on Bluetooth earphones. "
+                "Laptop microphone selected: Spotify and media audio play with zero muffling."
+            )
+            self._profile_lbl.show()
+        else:
+            self._profile_lbl.hide()
+
     def _apply(self):
         from memory.config_manager import (
-            get_input_device, get_output_device,
             save_input_device, save_output_device,
         )
         new_in  = self._in_box.currentData()  or ""
         new_out = self._out_box.currentData() or ""
-        changed = (new_in != get_input_device()) or (new_out != get_output_device())
         save_input_device(new_in)
         save_output_device(new_out)
         self.hide()
-        # Only rebuild the session if something actually moved — a no-op Apply
-        # should not cost a reconnect.
-        if changed:
-            self.picked.emit()
+        # Always emit picked so the session reconnects and streams re-bind directly to hardware
+        self.picked.emit()
 
 
 class MemoryOverlay(_HudOverlay):
@@ -4408,6 +4444,7 @@ class MainWindow(QMainWindow):
     _video_close_sig = pyqtSignal()
     _video_mute_sig  = pyqtSignal(bool)
     _clipboard_sig  = pyqtSignal(str)        # clipboard text changed (thread-safe)
+    _mute_sig       = pyqtSignal(bool)       # thread-safe mute state toggle
     _confirm_sig    = pyqtSignal(str, str)   # (title, detail) — irreversible-action gate
     _confirm_hide_sig = pyqtSignal()
     _wake_dl_sig    = pyqtSignal(bool, str)  # wake-word install finished (ok, message)
@@ -4431,6 +4468,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle(f"{_display} — {APP_VERSION}")
         self.setMinimumSize(_MIN_W, _MIN_H)
+        self._is_closed: bool = False
         self.resize(_DEFAULT_W, _DEFAULT_H)
 
         screen = QApplication.primaryScreen().availableGeometry()
@@ -4693,6 +4731,7 @@ class MainWindow(QMainWindow):
         self._video_open_sig.connect(self._on_video_open)
         self._video_close_sig.connect(self._on_video_close)
         self._video_mute_sig.connect(self._on_video_mute)
+        self._mute_sig.connect(self._set_muted)
         self._clipboard_sig.connect(self._show_clipboard_panel)
         self._wake_dl_sig.connect(self._on_wake_install_done)
         self._quiz_sig.connect(self._show_quiz)
@@ -4719,6 +4758,10 @@ class MainWindow(QMainWindow):
         sc_full.activated.connect(self._toggle_fullscreen)
         sc_intr = QShortcut(QKeySequence("Escape"), self)
         sc_intr.activated.connect(self._do_interrupt)
+
+    def closeEvent(self, event):
+        self._is_closed = True
+        super().closeEvent(event)
 
     def _show_camera_frame(self, img_bytes: bytes):
         """Slot — display camera preview overlay (main thread)."""
@@ -5297,21 +5340,21 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         cw = self.centralWidget()
-        if self._overlay and self._overlay.isVisible():
+        if getattr(self, "_overlay", None) and self._overlay.isVisible():
             ow, oh = 460, 390
             self._overlay.setGeometry(
                 (cw.width()  - ow) // 2,
                 (cw.height() - oh) // 2,
                 ow, oh,
             )
-        if self._remote_overlay and self._remote_overlay.isVisible():
+        if getattr(self, "_remote_overlay", None) and self._remote_overlay.isVisible():
             ow, oh = RemoteKeyOverlay._OW, RemoteKeyOverlay._OH
             self._remote_overlay.setGeometry(
                 (cw.width()  - ow) // 2,
                 (cw.height() - oh) // 2,
                 ow, oh,
             )
-        if self._customize_overlay and self._customize_overlay.isVisible():
+        if getattr(self, "_customize_overlay", None) and self._customize_overlay.isVisible():
             ow, oh = CustomizeOverlay._OW, CustomizeOverlay._OH
             self._customize_overlay.setGeometry(
                 (cw.width()  - ow) // 2,
@@ -7181,10 +7224,17 @@ class MainWindow(QMainWindow):
 
 
 class _RootShim:
-    def __init__(self, app: QApplication):
+    def __init__(self, app: QApplication, ui=None):
         self._app = app
+        self._ui = ui
+
     def mainloop(self):
-        self._app.exec()
+        try:
+            self._app.exec()
+        finally:
+            if self._ui is not None:
+                self._ui._is_closed = True
+
     def protocol(self, *_):
         pass
 
@@ -7236,20 +7286,38 @@ def _apply_ui_scale() -> None:
 class JarvisUI:
     def __init__(self, face_path: str, size=None):
         _apply_ui_scale()
+        self._is_closed = False
         self._app = QApplication.instance() or QApplication(sys.argv)
         self._app.setStyle("Fusion")
         self._win = MainWindow(face_path)
-        self.root = _RootShim(self._app)
+        self.root = _RootShim(self._app, self)
         self._win.show()
+
+    def _is_alive(self) -> bool:
+        if getattr(self, "_is_closed", False):
+            return False
+        try:
+            return self._win is not None and not getattr(self._win, "_is_closed", False)
+        except (RuntimeError, AttributeError):
+            return False
 
     @property
     def muted(self) -> bool:
-        return self._win._muted
+        try:
+            if not self._is_alive():
+                return True
+            return self._win._muted
+        except (RuntimeError, AttributeError):
+            return True
 
     @muted.setter
     def muted(self, v: bool):
-        if v != self._win._muted:
-            self._win._toggle_mute()
+        try:
+            if not self._is_alive():
+                return
+            self._win._mute_sig.emit(bool(v))
+        except (RuntimeError, AttributeError):
+            pass
 
     @property
     def current_file(self) -> str | None:
@@ -7387,101 +7455,161 @@ class JarvisUI:
             pass
 
     def notify_phone_connected(self) -> None:
-        self._win.notify_phone_connected()
+        try:
+            if not self._is_alive():
+                return
+            self._win.notify_phone_connected()
+        except (RuntimeError, AttributeError):
+            pass
 
     def set_state(self, state: str):
-        self._win._state_sig.emit(state)
+        try:
+            if not self._is_alive():
+                return
+            self._win._state_sig.emit(state)
+        except (RuntimeError, AttributeError):
+            pass
 
     def write_log(self, text: str):
-        self._win._log_sig.emit(text)
+        try:
+            if not self._is_alive():
+                return
+            self._win._log_sig.emit(text)
+        except (RuntimeError, AttributeError):
+            pass
 
     def wait_for_api_key(self):
-        while not self._win._ready:
+        while not self._is_alive() or not self._win._ready:
             time.sleep(0.1)
 
     def show_content(self, title: str, text: str):
         """Thread-safe: display content in the panel below the HUD."""
-        self._win._content_sig.emit(title[:48], text[:4000])
+        try:
+            if not self._is_alive():
+                return
+            self._win._content_sig.emit(title[:48], text[:4000])
+        except (RuntimeError, AttributeError):
+            pass
 
     def show_code_job(self, job: dict) -> None:
         """Thread-safe: draw the coding agent's live progress in the panel."""
-        self._win._codejob_sig.emit(dict(job))
+        try:
+            if not self._is_alive():
+                return
+            self._win._codejob_sig.emit(dict(job))
+        except (RuntimeError, AttributeError):
+            pass
 
     def show_quiz(self, topic: str, questions, grade=None) -> None:
-        """Thread-safe: put an interactive quiz on the board.
-
-        `grade(question, given)` decides each answer — the plugin supplies it so
-        the marking rules live with the questions rather than being duplicated
-        here. Returning None from it means "JARVIS should judge this one", which
-        is how open answers and near-miss gap-fills are handled.
-
-        Returns immediately: the user answers at their own pace and the finished
-        result is delivered back through on_text_command.
-        """
-        self._win._quiz_sig.emit(str(topic or ""), list(questions or []), grade)
+        """Thread-safe: put an interactive quiz on the board."""
+        try:
+            if not self._is_alive():
+                return
+            self._win._quiz_sig.emit(str(topic or ""), list(questions or []), grade)
+        except (RuntimeError, AttributeError):
+            pass
 
     def hide_quiz(self) -> None:
         """Thread-safe: clear any quiz currently on the board."""
-        self._win._quiz_hide_sig.emit()
+        try:
+            if not self._is_alive():
+                return
+            self._win._quiz_hide_sig.emit()
+        except (RuntimeError, AttributeError):
+            pass
 
     def show_review(self, title: str, summary: str, findings, unclear=None) -> None:
-        """Thread-safe: lay a document review into the panel below the HUD.
-
-        `findings` is a list of {heading, detail, severity, quote, suggestion};
-        severity is one of 'serious' / 'caution' / 'note' and decides colour and
-        order here, so the caller supplies no styling of its own.
-        """
-        self._win._review_sig.emit(str(title or ""), str(summary or ""),
-                                   list(findings or []), list(unclear or []))
+        """Thread-safe: lay a document review into the panel below the HUD."""
+        try:
+            if not self._is_alive():
+                return
+            self._win._review_sig.emit(str(title or ""), str(summary or ""),
+                                       list(findings or []), list(unclear or []))
+        except (RuntimeError, AttributeError):
+            pass
 
     def prompt_reconfig(self):
         """Thread-safe: show the API key setup overlay (e.g. after an auth error)."""
-        self._win._ready = False
-        self._win._reconfig_sig.emit()
+        try:
+            if not self._is_alive():
+                return
+            self._win._ready = False
+            self._win._reconfig_sig.emit()
+        except (RuntimeError, AttributeError):
+            pass
 
     def show_camera_frame(self, img_bytes: bytes):
         """Thread-safe: show a webcam frame in the small overlay (screen captures)."""
-        self._win._camera_sig.emit(img_bytes)
+        try:
+            if not self._is_alive():
+                return
+            self._win._camera_sig.emit(img_bytes)
+        except (RuntimeError, AttributeError):
+            pass
 
     def show_video(self, source: str, title: str = "", muted: bool = True,
                    audio_source: str = "") -> None:
-        """Thread-safe: play a video where the avatar normally is.
-
-        `source` is a local path or a direct media URL. `audio_source` is for
-        the case where the sound arrives as its own stream — YouTube serves no
-        combined format any more — and when it is given the two are played
-        together and kept in step.
-
-        Muted by default, and that is a decision rather than a default: a
-        soundtrack talking over JARVIS is the one way this could make the
-        assistant worse. The user turns sound on from the header button or by
-        asking, and closes it the same two ways.
-        """
-        self._win._video_open_sig.emit(str(source or ""), str(title or ""),
-                                       bool(muted), str(audio_source or ""))
+        """Thread-safe: play a video where the avatar normally is."""
+        try:
+            if not self._is_alive():
+                return
+            self._win._video_open_sig.emit(str(source or ""), str(title or ""),
+                                           bool(muted), str(audio_source or ""))
+        except (RuntimeError, AttributeError):
+            pass
 
     def stop_video(self) -> None:
         """Thread-safe: close the video and give the HUD back to the avatar."""
-        self._win._video_close_sig.emit()
+        try:
+            if not self._is_alive():
+                return
+            self._win._video_close_sig.emit()
+        except (RuntimeError, AttributeError):
+            pass
 
     def set_video_muted(self, muted: bool) -> None:
         """Thread-safe: silence or unsilence whatever is playing."""
-        self._win._video_mute_sig.emit(bool(muted))
+        try:
+            if not self._is_alive():
+                return
+            self._win._video_mute_sig.emit(bool(muted))
+        except (RuntimeError, AttributeError):
+            pass
 
     def video_is_playing(self) -> bool:
-        return bool(self._win.video_is_playing())
+        try:
+            if not self._is_alive():
+                return False
+            return bool(self._win.video_is_playing())
+        except (RuntimeError, AttributeError):
+            return False
 
     def start_camera_stream(self) -> None:
         """Thread-safe: start live camera feed in the full HUD area."""
-        self._win.start_camera_stream()
+        try:
+            if not self._is_alive():
+                return
+            self._win.start_camera_stream()
+        except (RuntimeError, AttributeError):
+            pass
 
     def stop_camera_stream(self) -> None:
         """Thread-safe: stop the live camera feed."""
-        self._win.stop_camera_stream()
+        try:
+            if not self._is_alive():
+                return
+            self._win.stop_camera_stream()
+        except (RuntimeError, AttributeError):
+            pass
 
     @property
     def assistant_name(self) -> str:
-        return self._win._assistant_name
+        try:
+            if not self._is_alive():
+                return "JARVIS"
+            return self._win._assistant_name
+        except (RuntimeError, AttributeError):
+            return "JARVIS"
 
     def start_speaking(self):
         self.set_state("SPEAKING")

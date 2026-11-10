@@ -1,0 +1,105 @@
+{
+  "id": "delete_file_explorer_shortcuts",
+  "name": "Delete File Explorer Shortcuts",
+  "description": "Deletes selected items within Windows File Explorer.",
+  "category": "application",
+  "application": "File Explorer",
+  "version": "1.0.0",
+  "intent_examples": [
+    "delete shortcuts in File Explorer",
+    "remove items from folder",
+    "delete files"
+  ],
+  "parameters": [
+    {
+      "name": "file_path",
+      "type": "string",
+      "description": "Name of the file to select",
+      "required": true,
+      "default": null,
+      "example": null
+    }
+  ],
+  "preconditions": [
+    "File Explorer is open"
+  ],
+  "steps": [
+    {
+      "step_id": 1,
+      "thought": "Focus on File Explorer window",
+      "tool": "open_app",
+      "parameters": {
+        "app_name": "Explorer"
+      },
+      "selector": null,
+      "verification": {
+        "type": "window_active",
+        "target": "File Explorer",
+        "expected_value": "",
+        "timeout_seconds": 8.0
+      },
+      "recovery": {
+        "retry_count": 2,
+        "delay_between_retries": 1.2,
+        "reobserve_window": true
+      },
+      "is_sensitive": false
+    },
+    {
+      "step_id": 2,
+      "thought": "Select the specific file to delete",
+      "tool": "windows_uia",
+      "parameters": {
+        "action": "click",
+        "name": "{file_path}",
+        "control_type": "ListItem"
+      },
+      "selector": null,
+      "verification": {
+        "type": "element_selected",
+        "target": "{file_path}",
+        "expected_value": "",
+        "timeout_seconds": 8.0
+      },
+      "recovery": {
+        "retry_count": 2,
+        "delay_between_retries": 1.2,
+        "reobserve_window": true
+      },
+      "is_sensitive": false
+    },
+    {
+      "step_id": 3,
+      "thought": "Press the Delete key to remove the file",
+      "tool": "computer_control",
+      "parameters": {
+        "action": "press",
+        "key": "delete"
+      },
+      "selector": null,
+      "verification": {
+        "type": "success",
+        "target": "",
+        "expected_value": "",
+        "timeout_seconds": 8.0
+      },
+      "recovery": {
+        "retry_count": 2,
+        "delay_between_retries": 1.2,
+        "reobserve_window": true
+      },
+      "is_sensitive": false
+    }
+  ],
+  "tool_dependencies": [
+    "computer_control",
+    "open_app",
+    "windows_uia"
+  ],
+  "permissions": "destructive",
+  "status": "approved",
+  "created_at": "2026-11-09T19:38:41.290629",
+  "last_validated_at": null,
+  "last_used_at": null,
+  "author": "user_demonstration"
+}

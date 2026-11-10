@@ -699,9 +699,10 @@ def file_controller(
                 append=params.get("append", False)
             )
 
-        elif action == "find":
+        elif action in ("find", "search", "search_files"):
+            search_query = name or params.get("query") or params.get("name", "")
             return find_files(
-                name=name or params.get("name", ""),
+                name=search_query,
                 extension=params.get("extension", ""),
                 path=path,
                 max_results=min(int(params.get("max_results", 20)), 50),

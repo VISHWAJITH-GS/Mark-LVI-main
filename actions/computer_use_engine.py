@@ -464,21 +464,40 @@ class ComputerUseEngine:
     def open_application(self, app_name: str, arguments: Optional[str] = None) -> outcome.ActionResult:
         t0 = time.monotonic()
         from actions import open_app
-        raw_res = open_app.open_app({"app": app_name, "args": arguments} if arguments else {"app": app_name})
+        raw_res = open_app.open_app({"app_name": app_name, "args": arguments} if arguments else {"app_name": app_name})
         norm = outcome.normalize_result(raw_res, action_name="open_application")
         # Check verification
         ver = self.verifier.verify_window_launch(app_name, timeout=2.5)
-        if ver.status == "done":
+        if ver.status == "done" and ver.verified:
             norm.status = outcome.STATUS_DONE
             norm.verified = True
             norm.success = True
             norm.message = ver.message
         elif ver.status == "started":
             norm.status = outcome.STATUS_STARTED
-            norm.verified = True
-            norm.success = True
+            norm.verified = False
+            norm.success = False
+            norm.message = ver.message
+        else:
+            norm.status = outcome.STATUS_UNVERIFIED
+            norm.verified = False
+            norm.success = False
             norm.message = ver.message
         return norm
+
+    def list_running_applications(self) -> outcome.ActionResult:
+        t0 = time.monotonic()
+        wins = windows_uia.list_open_windows()
+        app_names = [w["title"] for w in wins if w.get("title")]
+        return outcome.ActionResult(
+            status=outcome.STATUS_DONE,
+            action="list_running_applications",
+            success=True,
+            verified=True,
+            message=f"Currently open applications ({len(app_names)}): {', '.join(app_names[:10])}" if app_names else "No active application windows detected.",
+            data={"windows": wins, "count": len(wins)},
+            duration_ms=(time.monotonic() - t0) * 1000,
+        )
 
 
 _DEFAULT_ENGINE: Optional[ComputerUseEngine] = None
@@ -570,10 +589,14 @@ def computer_use(parameters: dict, player=None, speak=None, **kwargs) -> str:
         res = engine.minimize_window(title=p.get("title"))
     elif action == "maximize_window":
         res = engine.maximize_window(title=p.get("title"))
-    elif action == "close_window":
-        res = engine.close_window(title=p.get("title"))
-    elif action == "open_application":
+    elif action in ("close_window", "close_application"):
+        res = engine.close_window(title=p.get("title") or p.get("app_name"))
+    elif action in ("open_application", "launch_application"):
         res = engine.open_application(app_name=p.get("app_name", ""), arguments=p.get("arguments"))
+    elif action in ("list_running_applications", "list_applications", "open_applications", "running_applications"):
+        res = engine.list_running_applications()
+    elif action in ("get_active_window", "active_window", "foreground_window"):
+        res = engine.inspect_active_window()
     else:
         res = outcome.ActionResult(
             status=outcome.STATUS_UNSUPPORTED,

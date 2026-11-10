@@ -340,6 +340,72 @@ def _compare(items: list[str], aspect: str) -> str:
     return "\n".join(lines)
 
 
+# ── Webpage Reader & Summarizer ──────────────────────────────────────────────
+
+def _read_webpage(url: str, max_chars: int = 5000) -> str:
+    """Fetch webpage content, strip HTML tags/scripts, and return readable text."""
+    import urllib.request
+    import html
+    import re
+
+    clean_url = url.strip()
+    if not clean_url.startswith(("http://", "https://")):
+        clean_url = f"https://{clean_url}"
+
+    req = urllib.request.Request(
+        clean_url,
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            content_type = resp.headers.get("content-type", "").lower()
+            if "text/html" not in content_type and "text/plain" not in content_type:
+                return f"[Webpage {clean_url}: Non-HTML content ({content_type})]"
+            raw_html = resp.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        return f"[Failed to fetch webpage {clean_url}: {e}]"
+
+    m_title = re.search(r"<title[^>]*>(.*?)</title>", raw_html, flags=re.IGNORECASE | re.DOTALL)
+    title = html.unescape(m_title.group(1)).strip() if m_title else "Webpage"
+
+    clean = re.sub(r"<(script|style|nav|footer|header|noscript)[^>]*>.*?</\1>", " ", raw_html, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<[^>]+>", " ", clean)
+    text = html.unescape(text)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    return f"Title: {title}\nSource: {clean_url}\n\nContent:\n{text[:max_chars]}"
+
+
+def _summarize_webpage(url_or_query: str) -> str:
+    """Read webpage or search topic and produce a structured summary with source link."""
+    from core import gemini
+    content = _read_webpage(url_or_query) if url_or_query.startswith(("http://", "https://", "www.")) else _search(url_or_query)
+    prompt = (
+        f"You are JARVIS. Summarize the following webpage content clearly and accurately in 3-4 bullet points. "
+        f"Include key facts, conclusions, and cite the source URL:\n\n{content}"
+    )
+    try:
+        summary = gemini.text(prompt, tier=gemini.FAST, timeout_ms=8000)
+        if summary and summary.strip():
+            return summary.strip()
+    except Exception:
+        pass
+    return content[:1500]
+
+
+def _open_search_result(url: str) -> str:
+    """Open verified URL in user's default browser."""
+    import webbrowser
+    clean_url = url.strip()
+    if not clean_url.startswith(("http://", "https://")):
+        clean_url = f"https://{clean_url}"
+    try:
+        webbrowser.open(clean_url)
+        return f"Opened webpage in browser: {clean_url}"
+    except Exception as e:
+        return f"Failed to open browser for {clean_url}: {e}"
+
+
 # ── Public entry point ─────────────────────────────────────────────────────────
 
 from core import outcome
@@ -377,6 +443,12 @@ def web_search(
             found = _research(query)
         elif mode == "price":
             found = _price(query)
+        elif mode in ("read_webpage", "read_page", "read_url"):
+            found = _read_webpage(query)
+        elif mode in ("summarize", "summarize_webpage", "summary"):
+            found = _summarize_webpage(query)
+        elif mode in ("open", "open_url", "open_result"):
+            found = _open_search_result(query)
         else:
             found = _search(query)
 
@@ -402,17 +474,17 @@ def web_search(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "web_search",
-    "description": "Searches the web. Use for ANY question about current facts, events, prices, or topics — always prefer this over guessing. Modes: 'search' (default), 'news' (latest headlines on a topic), 'research' (deep comprehensive answer), 'price' (product cost lookup), 'compare' (side-by-side comparison of items).",
+    "description": "Searches the web, reads web pages, and summarizes articles. Use for ANY question about current facts, events, documentation, news, or articles. Modes: 'search' (default), 'news' (latest headlines), 'research' (comprehensive research), 'read_webpage' (extract full text from a URL), 'summarize' (summarize article or URL), 'open' (open URL in browser), 'compare' (side-by-side comparison).",
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "query": {
                 "type": "STRING",
-                "description": "Search query or topic"
+                "description": "Search query, URL to read or summarize, or topic"
             },
             "mode": {
                 "type": "STRING",
-                "description": "search | news | research | price | compare"
+                "description": "search | news | research | read_webpage | summarize | open | compare | price"
             },
             "items": {
                 "type": "ARRAY",

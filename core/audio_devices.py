@@ -87,12 +87,18 @@ _chosen_api: dict = {"input": None, "output": None}
 # DirectSound for the microphone and MME for the speakers — a split that no
 # amount of reasoning would have produced.
 _PREFERRED_APIS = {
-    "Windows": ("directsound", "mme", "wasapi"),
-    # macOS has only Core Audio, so there is nothing to disambiguate.
-    "Darwin":  ("core audio",),
-    # PulseAudio/PipeWire present one clean endpoint per device; raw ALSA
-    # presents dozens of routing permutations of the same card.
-    "Linux":   ("pulse", "pipewire", "jack", "alsa"),
+    "Windows": {
+        "input": ("directsound", "mme", "wasapi"),
+        "output": ("mme", "wasapi"),  # DirectSound output is a silent sink on Win11!
+    },
+    "Darwin": {
+        "input": ("core audio",),
+        "output": ("core audio",),
+    },
+    "Linux": {
+        "input": ("pulse", "pipewire", "jack", "alsa"),
+        "output": ("pulse", "pipewire", "jack", "alsa"),
+    },
 }
 
 # ── "It opens" is not "it works" ─────────────────────────────────────────────
@@ -223,6 +229,19 @@ def _usable(idx: int, kind: str) -> bool:
     try:
         import sounddevice as sd
         rate = _RATES.get(kind, 16000)
+
+        # On Windows, DirectSound output is a silent sink that swallows writes in 0 ms.
+        if kind == "output":
+            try:
+                apis = [a.get("name", "").lower() for a in sd.query_hostapis()]
+                dev_info = sd.query_devices(idx)
+                hostapi_id = dev_info.get("hostapi", -1)
+                api_name = apis[hostapi_id] if 0 <= hostapi_id < len(apis) else ""
+                if "directsound" in api_name:
+                    return False
+            except Exception:
+                pass
+
         if kind == "input":
             st = sd.InputStream(samplerate=rate, channels=1, dtype="int16",
                                 blocksize=1024, device=idx,
@@ -274,7 +293,7 @@ def _query() -> dict[str, list[str]]:
         except Exception:
             apis = []
 
-        preferred = _PREFERRED_APIS.get(platform.system(), ())
+        pref_platform = _PREFERRED_APIS.get(platform.system(), {})
 
         def _collect(api_filter, kind) -> list[tuple[int, str]]:
             """(index, name) for named, non-pseudo devices on one side that can
@@ -302,6 +321,7 @@ def _query() -> dict[str, list[str]]:
         # speakers only work on MME — and a single global choice cannot be right
         # for both.
         for kind in ("input", "output"):
+            preferred = pref_platform.get(kind, ()) if isinstance(pref_platform, dict) else pref_platform
             for api_filter in list(preferred) + [None]:
                 found = _collect(api_filter, kind)
                 if not found:
@@ -336,12 +356,30 @@ def prefetch() -> None:
     threading.Thread(target=_work, daemon=True, name="audio-devices").start()
 
 
+def invalidate_cache() -> None:
+    """Drop cached device queries and reset PortAudio so hotplugged Bluetooth devices are re-scanned."""
+    global _cache, _probe_results
+    with _cache_lock:
+        _cache = None
+        _probe_results = {}
+        _chosen_api["input"] = None
+        _chosen_api["output"] = None
+    try:
+        import sounddevice as sd
+        sd._terminate()
+        sd._initialize()
+    except Exception:
+        pass
+
+
 def list_devices(kind: str, refresh: bool = False) -> list[str]:
     """Device names for 'input' or 'output'. Falls back to a synchronous query
     if the prefetch has not landed yet — correctness over the cache."""
     global _cache
+    if refresh:
+        invalidate_cache()
     with _cache_lock:
-        cached = None if refresh else _cache
+        cached = _cache
     if cached is None:
         cached = _query()
         with _cache_lock:
@@ -394,8 +432,10 @@ def resolve(name: str, kind: str):
         # populates it; calling it here is a no-op once the cache is warm.
         list_devices(kind)
         chosen = _chosen_api.get(kind)
+        pref_platform = _PREFERRED_APIS.get(platform.system(), {})
+        preferred = pref_platform.get(kind, ()) if isinstance(pref_platform, dict) else pref_platform
         orders = ([chosen] if chosen is not None else []) \
-            + [a for a in _PREFERRED_APIS.get(platform.system(), ()) if a != chosen] \
+            + [a for a in preferred if a != chosen] \
             + [None]
 
         # A candidate only counts if it can be opened at the rate this side runs
@@ -512,29 +552,118 @@ def measure_input(name: str, seconds: float = 3.0, on_level=None) -> dict:
             "level": min(1.0, peak / 12000.0), "verdict": verdict}
 
 
-def play_tone(name: str, seconds: float = 0.6) -> dict:
-    """Play a short tone through one output so the user can confirm they hear it.
+def is_bluetooth_device(name: str) -> bool:
+    """Check if device name or endpoint refers to a Bluetooth device."""
+    low = (name or "").lower()
+    bt_keywords = ("bluetooth", "buds", "headset", "airpods", "freebuds", "bth", "oppo", "wireless", "hands-free")
+    return any(k in low for k in bt_keywords)
 
-    -> {"ok", "verdict"}. There is no way to check this from software — the
-    silent-sink probe above proves audio was CONSUMED, not that a speaker made
-    a sound — so the answer comes from the person, and this only makes the
-    sound for them to answer about.
+
+def get_device_status(name: str, kind: str) -> dict:
+    """
+    Get detailed device status including connection state and Bluetooth profile info.
+    Returns:
+        {
+            "name": str,
+            "connected": bool,
+            "is_bluetooth": bool,
+            "profile": str,  # 'A2DP Stereo', 'HFP Hands-Free', 'Built-in Audio', etc.
+            "warning": str | None,
+        }
+    """
+    wanted = (name or "").strip()
+    if not wanted or wanted == DEFAULT_LABEL:
+        return {
+            "name": DEFAULT_LABEL,
+            "connected": True,
+            "is_bluetooth": False,
+            "profile": "System Default",
+            "warning": None,
+        }
+
+    is_bt = is_bluetooth_device(wanted)
+    idx = resolve(wanted, kind)
+    connected = (idx is not None)
+
+    warning = None
+    profile = "Built-in / USB"
+    if is_bt:
+        if kind == "input":
+            profile = "Bluetooth HFP (Hands-Free Mono)"
+            warning = (
+                "Bluetooth microphone selected: Windows switches earphones to Hands-Free (HFP) mode. "
+                "This reduces playback sound quality and may muffle background apps (like Spotify). "
+                "Recommended: Use Laptop Microphone for high-fidelity A2DP stereo playback."
+            )
+        else:
+            profile = "Bluetooth A2DP (Stereo Playback)"
+    else:
+        if kind == "input":
+            profile = "Built-in Microphone Array"
+        else:
+            profile = "Built-in Speakers"
+
+    return {
+        "name": wanted,
+        "connected": connected,
+        "is_bluetooth": is_bt,
+        "profile": profile,
+        "warning": warning,
+    }
+
+
+def play_tone(name: str, seconds: float = 0.6) -> dict:
+    """Play a short test sound through the chosen output device.
+
+    Uses RawOutputStream to ensure the audio is actually routed to the specified endpoint,
+    not the system default. Checks that audio was consumed in real time, rejecting silent sinks.
     """
     idx = resolve(name, "output")
+    if name and name != DEFAULT_LABEL and idx is None:
+        return {
+            "ok": False,
+            "verdict": f"Output device '{name}' is disconnected or unavailable. Please connect it or choose another output.",
+        }
+
     try:
         import numpy as np
         import sounddevice as sd
 
         rate = _RATES.get("output", 24000)
         t = np.linspace(0, seconds, int(rate * seconds), endpoint=False)
-        # 660 Hz, well inside every speaker's range and unmistakable against
-        # room noise. Quiet enough not to startle somebody wearing headphones.
-        tone = (np.sin(2 * np.pi * 660 * t) * 6000).astype(np.int16)
-        sd.play(tone, samplerate=rate, device=idx)
-        sd.wait()
+        # Distinct pleasant two-tone chime (550 Hz -> 880 Hz)
+        half = len(t) // 2
+        tone1 = np.sin(2 * np.pi * 550 * t[:half]) * 8000
+        tone2 = np.sin(2 * np.pi * 880 * t[half:]) * 8000
+        tone = np.concatenate([tone1, tone2]).astype(np.int16)
+
+        st = sd.RawOutputStream(
+            samplerate=rate,
+            channels=1,
+            dtype="int16",
+            device=idx,
+            blocksize=1024,
+        )
+        st.start()
+        t0 = time.monotonic()
+        st.write(tone.tobytes())
+        elapsed = time.monotonic() - t0
+        st.stop()
+        st.close()
+
+        if elapsed < seconds * 0.3:
+            return {
+                "ok": False,
+                "verdict": "Output device swallowed audio without playing (silent sink).",
+            }
+
+        dev_label = name if (name and name != DEFAULT_LABEL) else "System Default"
+        return {
+            "ok": True,
+            "verdict": f"Chime played through '{dev_label}' ({elapsed:.2f}s). Did you hear it?",
+        }
     except Exception as e:
         return {"ok": False, "verdict": f"This output could not be played: {e}"}
-    return {"ok": True, "verdict": "Tone played. Did you hear it?"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -196,3 +196,14 @@ def backup_skill(skill_id: str) -> Optional[Path]:
     with _storage_lock:
         backup_path.write_text(json.dumps(skill.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
     return backup_path
+
+
+class SkillStorage:
+    """Object-oriented wrapper around functional skill storage APIs."""
+    save_skill = staticmethod(save_skill)
+    load_skill = staticmethod(load_skill)
+    list_skills = staticmethod(list_skills)
+    delete_skill = staticmethod(delete_skill)
+    update_skill_status = staticmethod(update_skill_status)
+    backup_skill = staticmethod(backup_skill)
+

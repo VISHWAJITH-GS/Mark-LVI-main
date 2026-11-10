@@ -74,13 +74,20 @@ _PLACEHOLDERS = (
 )
 
 def run(parameters: dict, player=None, session_memory=None) -> str:
-    contact = (parameters.get("contact") or "").strip()
-    raw_message = (parameters.get("message") or "").strip()
-    formal = parameters.get("formal", True)
+    p = parameters or {}
+    action = (p.get("action") or "").lower().strip()
+    contact = (p.get("contact") or "").strip()
+    raw_message = (p.get("message") or "").strip()
+    formal = p.get("formal", True)
+
+    # If action indicates reading, delegate directly
+    if action in ("read", "read_chat", "read_latest", "summarize"):
+        from plugins import whatsapp_reader
+        return whatsapp_reader.run(parameters, player=player, session_memory=session_memory)
 
     if not contact:
         return "No contact name was specified for the WhatsApp message. Please tell me who you want to message."
-    if not raw_message or any(p in raw_message.lower() for p in _PLACEHOLDERS):
+    if not raw_message or any(placeholder in raw_message.lower() for placeholder in _PLACEHOLDERS):
         return f"What message would you like me to send to {contact}?"
 
     # Format message formally

@@ -1,0 +1,24 @@
+[
+  {
+    "id": "rem_1794202042_eb5c",
+    "message": "Drink water",
+    "due_time": "2026-11-09T10:58:00",
+    "recurrence": "none",
+    "status": "completed",
+    "created_at": "2026-11-09T10:57:22",
+    "task_name": "JARVISReminder_20261109_105800_5e41",
+    "scheduled": true,
+    "completed_at": "2026-11-09T10:58:02"
+  },
+  {
+    "id": "rem_1794207290_6876",
+    "message": "First thing, tell me about the Edge closing glitch.",
+    "due_time": "2026-11-09T13:25:11",
+    "recurrence": "none",
+    "status": "completed",
+    "created_at": "2026-11-09T12:24:50",
+    "task_name": "JARVISReminder_20261109_132511_a7fc",
+    "scheduled": true,
+    "completed_at": "2026-11-09T18:41:37"
+  }
+]
