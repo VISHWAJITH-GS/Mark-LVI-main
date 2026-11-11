@@ -473,5 +473,68 @@ class TestKeenaHudTransformation(unittest.TestCase):
         hud.set_mini_mode(False)
         self.assertTrue(conv.isVisible())
 
+    def test_19_left_edge_minimized_displays_dock(self):
+        """Verify minimized displays show on the left edge of the screen, expand on hover, and restore on click."""
+        dock = self.win._dots_overlay
+        self.assertFalse(dock.isVisible())
+
+        # Open Display 1 and Display 2
+        d1 = self.win._on_open_display("image", "", "CM of Tamil Nadu")
+        d2 = self.win._on_open_display("text", "# Tamil Nadu Map", "Map of Tamil Nadu")
+        self.assertEqual(d1, 1)
+        self.assertEqual(d2, 2)
+
+        # Minimize Display 1
+        self.win._on_display_minimized(1)
+        self.assertTrue(dock.isVisible())
+        self.assertIn(1, dock._buttons)
+        self.assertEqual(len(dock._buttons), 1)
+
+        # Verify docked at the left edge of the screen
+        screen = QApplication.primaryScreen().availableGeometry()
+        self.assertEqual(dock.x(), screen.left())
+
+        pill1 = dock._buttons[1]
+        self.assertIn("Display 1: CM of Tamil Nadu", pill1.toolTip())
+
+        # Test hover interaction: expands to show display number and name
+        pill1.enterEvent(None)
+        self.assertTrue(pill1._is_hovered)
+        self.assertIn("1", pill1.text())
+        self.assertIn("CM of Tamil Nadu", pill1.text())
+
+        # Test unhover: collapses back to compact display number
+        pill1.leaveEvent(None)
+        self.assertFalse(pill1._is_hovered)
+        self.assertEqual(pill1.text(), "1")
+
+        # Minimize Display 2
+        self.win._on_display_minimized(2)
+        self.assertEqual(len(dock._buttons), 2)
+        self.assertIn(2, dock._buttons)
+
+        pill2 = dock._buttons[2]
+        self.assertIn("Display 2: Map of Tamil Nadu", pill2.toolTip())
+        pill2.enterEvent(None)
+        self.assertIn("2", pill2.text())
+        self.assertIn("Map of Tamil Nadu", pill2.text())
+        pill2.leaveEvent(None)
+
+        # Test click to open: clicking pill 1 opens Display 1
+        pill1.click()
+        self.assertTrue(self.win._displays[1].isVisible())
+        self.assertNotIn(1, dock._buttons)
+        self.assertIn(2, dock._buttons)
+        self.assertEqual(len(dock._buttons), 1)
+
+        # Clicking pill 2 opens Display 2 and hides the dock
+        pill2.click()
+        self.assertTrue(self.win._displays[2].isVisible())
+        self.assertFalse(dock.isVisible())
+        self.assertEqual(len(dock._buttons), 0)
+
+        # Cleanup
+        self.win._on_close_display_win(0)
+
 if __name__ == "__main__":
     unittest.main()

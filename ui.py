@@ -27,7 +27,7 @@ else:
 os.environ.setdefault("QT_LOGGING_RULES", "qt.multimedia.*=false")
 
 from PyQt6.QtCore import (
-    QEasingCurve, QLineF, QMimeData, QObject, QParallelAnimationGroup, QPointF,
+    QEvent, QEasingCurve, QLineF, QMimeData, QObject, QParallelAnimationGroup, QPointF,
     QPoint, QPropertyAnimation, QRect, QRectF, QSize, QSizeF, Qt, QTimer,
     QUrl, pyqtSignal,
 )
@@ -5535,8 +5535,153 @@ class ArmouryCrateTelemetryWidget(QWidget):
         self.lbl_net.setText(net_str)
 
 
+class MinimizedDisplayPill(QPushButton):
+    def __init__(self, display_id: int, title: str, content_type: str = "image", parent=None):
+        super().__init__(parent)
+        self.display_id = display_id
+        self.display_title = title or f"Display {display_id}"
+        self.content_type = content_type
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMouseTracking(True)
+
+        self.setToolTip(f"Display {self.display_id}: {self.display_title}\n(Click to open)")
+
+        self.setFixedHeight(34)
+        self._collapsed_w = 40
+        self._expanded_w = min(280, max(160, 50 + len(self.display_title) * 8))
+        self.setFixedWidth(self._collapsed_w)
+
+        self._is_hovered = False
+        self._update_style()
+        self._update_text()
+
+    def _update_text(self):
+        if self._is_hovered:
+            clean_title = self.display_title.strip()
+            if len(clean_title) > 24:
+                clean_title = clean_title[:22] + "..."
+            self.setText(f" {self.display_id} │ {clean_title} ")
+        else:
+            self.setText(str(self.display_id))
+
+    def _update_style(self):
+        if self._is_hovered:
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 rgba(40, 10, 35, 250), stop:1.0 rgba(14, 4, 12, 240));
+                    color: #ffffff;
+                    border: 1.5px solid #ffd700;
+                    border-left: 3px solid #ffd700;
+                    border-top-right-radius: 6px;
+                    border-bottom-right-radius: 6px;
+                    border-top-left-radius: 0px;
+                    border-bottom-left-radius: 0px;
+                    font-family: 'Courier New';
+                    font-size: 11px;
+                    font-weight: bold;
+                    text-align: left;
+                    padding-left: 8px;
+                }}
+            """)
+        else:
+            self.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(18, 5, 16, 235);
+                    color: {C.PRI};
+                    border: 1.5px solid {C.PRI};
+                    border-left: 3px solid {C.PRI};
+                    border-top-right-radius: 6px;
+                    border-bottom-right-radius: 6px;
+                    border-top-left-radius: 0px;
+                    border-bottom-left-radius: 0px;
+                    font-family: 'Courier New';
+                    font-size: 12px;
+                    font-weight: bold;
+                    text-align: center;
+                }}
+            """)
+
+    def enterEvent(self, e):
+        super().enterEvent(e)
+        self._is_hovered = True
+        self.setFixedWidth(self._expanded_w)
+        self._update_text()
+        self._update_style()
+        if self.parentWidget() and hasattr(self.parentWidget(), "recalculate_size"):
+            self.parentWidget().recalculate_size()
+
+    def leaveEvent(self, e):
+        super().leaveEvent(e)
+        self._is_hovered = False
+        self.setFixedWidth(self._collapsed_w)
+        self._update_text()
+        self._update_style()
+        if self.parentWidget() and hasattr(self.parentWidget(), "recalculate_size"):
+            self.parentWidget().recalculate_size()
+
+
+class MinimizedDisplaysDock(QWidget):
+    dot_clicked = pyqtSignal(int)
+
+    def __init__(self, parent_main_win=None):
+        super().__init__(None)
+        self._main_win = parent_main_win
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+
+        self._vbox = QVBoxLayout(self)
+        self._vbox.setContentsMargins(0, 6, 6, 6)
+        self._vbox.setSpacing(6)
+        self._vbox.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+
+        self._buttons: dict[int, MinimizedDisplayPill] = {}
+
+    def update_displays(self, display_items: list[tuple[int, str, str]]):
+        while self._vbox.count():
+            item = self._vbox.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._buttons.clear()
+
+        if not display_items:
+            self.hide()
+            return
+
+        for disp_id, disp_title, c_type in sorted(display_items, key=lambda x: x[0]):
+            pill = MinimizedDisplayPill(disp_id, disp_title, c_type, self)
+            pill.clicked.connect(lambda _, did=disp_id: self.dot_clicked.emit(did))
+            self._vbox.addWidget(pill)
+            self._buttons[disp_id] = pill
+
+        self._vbox.activate()
+        self.show()
+        self.recalculate_size()
+        self.raise_()
+
+    def recalculate_size(self):
+        if not self._buttons:
+            return
+        max_w = max((p.width() for p in self._buttons.values()), default=40) + 8
+        pill_count = len(self._buttons)
+        total_h = pill_count * 34 + (pill_count - 1) * 6 + 12
+        self.resize(max_w, total_h)
+        self.reposition()
+
+    def reposition(self):
+        screen = QApplication.primaryScreen().availableGeometry()
+        x = screen.left()
+        y = max(screen.top() + 60, screen.center().y() - self.height() // 2)
+        self.move(x, y)
+
+
+MinimizedDisplaysOverlay = MinimizedDisplaysDock
+
+
 class JarvisDisplayWindow(QWidget):
     closed = pyqtSignal(int)
+    minimized_requested = pyqtSignal(int)
     _img_data_sig = pyqtSignal(bytes)
 
     def __init__(self, display_id: int, name: str, content_type: str, source: str, title: str = "", parent=None):
@@ -5597,7 +5742,7 @@ class JarvisDisplayWindow(QWidget):
                 color: #ffffff;
             }}
         """)
-        self._min_btn.clicked.connect(self.showMinimized)
+        self._min_btn.clicked.connect(self._on_min_btn_clicked)
         hdr.addWidget(self._min_btn)
 
         close_btn = QPushButton("X")
@@ -5875,6 +6020,17 @@ class JarvisDisplayWindow(QWidget):
     def mouseReleaseEvent(self, e):
         self._drag_start = None
         super().mouseReleaseEvent(e)
+
+    def _on_min_btn_clicked(self):
+        self.hide()
+        self.minimized_requested.emit(self.display_id)
+
+    def changeEvent(self, e):
+        super().changeEvent(e)
+        if e.type() == QEvent.Type.WindowStateChange and self.isMinimized():
+            self.setWindowState(Qt.WindowState.WindowNoState)
+            self.hide()
+            self.minimized_requested.emit(self.display_id)
 
     def closeEvent(self, e):
         if hasattr(self, "_vid_player"):
@@ -6177,6 +6333,9 @@ class MainWindow(QMainWindow):
         self._stream_reply_sig.connect(self._on_stream_reply)
         self._displays: dict[int, JarvisDisplayWindow] = {}
         self._display_counter: int = 0
+        self._minimized_display_ids: set[int] = set()
+        self._dots_overlay = MinimizedDisplaysDock(self)
+        self._dots_overlay.dot_clicked.connect(self._on_restore_display)
         self._open_display_sig.connect(self._on_open_display)
         self._focus_display_sig.connect(self._on_focus_display)
         self._close_display_sig.connect(self._on_close_display_win)
@@ -6208,6 +6367,16 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._is_closed = True
+        if hasattr(self, "_dots_overlay"):
+            self._dots_overlay.close()
+        if hasattr(self, "_displays"):
+            for w in list(self._displays.values()):
+                try:
+                    w.close()
+                except Exception:
+                    pass
+            self._displays.clear()
+            self._minimized_display_ids.clear()
         if hasattr(self, "bottom_chat_dock"):
             self.bottom_chat_dock.close()
         if hasattr(self, "left_search_dock"):
@@ -6350,7 +6519,8 @@ class MainWindow(QMainWindow):
         name = f"DISPLAY {disp_id}"
         win = JarvisDisplayWindow(disp_id, name, content_type, source, title)
         self._displays[disp_id] = win
-        win.closed.connect(lambda d_id: self._displays.pop(d_id, None))
+        win.closed.connect(self._on_display_closed)
+        win.minimized_requested.connect(self._on_display_minimized)
 
         screen = QApplication.primaryScreen().availableGeometry()
         offset = ((disp_id - 1) % 6) * 36
@@ -6363,17 +6533,49 @@ class MainWindow(QMainWindow):
         self._on_log_line(f"SYS: Opened {name} ({content_type.upper()})")
         return disp_id
 
+    def _on_display_minimized(self, d_id: int):
+        self._minimized_display_ids.add(d_id)
+        self._update_dots_overlay()
+
+    def _on_restore_display(self, d_id: int):
+        self._minimized_display_ids.discard(d_id)
+        win = self._displays.get(d_id)
+        if win:
+            win.setWindowState(Qt.WindowState.WindowNoState)
+            win.show()
+            win.raise_()
+            win.activateWindow()
+        self._update_dots_overlay()
+
+    def _on_display_closed(self, d_id: int):
+        self._minimized_display_ids.discard(d_id)
+        self._displays.pop(d_id, None)
+        self._update_dots_overlay()
+
+    def _update_dots_overlay(self):
+        items = []
+        for did in sorted(list(self._minimized_display_ids)):
+            win = self._displays.get(did)
+            title = win.title_text if win else f"Display {did}"
+            c_type = win.content_type if win else "image"
+            items.append((did, title, c_type))
+        self._dots_overlay.update_displays(items)
+
+    def _update_dots_overlay_position(self):
+        if hasattr(self, "_dots_overlay") and self._dots_overlay.isVisible():
+            self._dots_overlay.reposition()
+
     def _on_focus_display(self, display_id: int):
         if display_id in self._displays:
+            self._minimized_display_ids.discard(display_id)
+            self._update_dots_overlay()
             win = self._displays[display_id]
             screen = QApplication.primaryScreen().availableGeometry()
             cx = max(screen.left() + 20, screen.center().x() - win.width() // 2)
             cy = max(screen.top() + 20, screen.center().y() - win.height() // 2)
             win.move(cx, cy)
-            if win.isMinimized():
-                win.showNormal()
-            else:
-                win.show()
+            win.setWindowState(Qt.WindowState.WindowNoState)
+            win.show()
             win.raise_()
             win.activateWindow()
             self._on_log_line(f"SYS: Focused DISPLAY {display_id} in center of screen")
@@ -6389,13 +6591,17 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
             self._displays.clear()
+            self._minimized_display_ids.clear()
+            self._update_dots_overlay()
             self._on_log_line("SYS: Closed all display windows")
             return True
         elif display_id in self._displays:
+            self._minimized_display_ids.discard(display_id)
             try:
                 self._displays[display_id].close()
             except Exception:
                 pass
+            self._update_dots_overlay()
             self._on_log_line(f"SYS: Closed DISPLAY {display_id}")
             return True
         return False
