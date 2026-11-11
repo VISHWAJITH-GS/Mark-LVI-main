@@ -886,7 +886,20 @@ def type_text(
                 time.sleep(0.05)
                 pyautogui.press("delete")
                 time.sleep(0.05)
-            pyautogui.typewrite(text, interval=0.03)
+            text_str = str(text or "")
+            if "\n" in text_str:
+                lines = text_str.split("\n")
+                for idx, line in enumerate(lines):
+                    if idx > 0:
+                        pyautogui.press("enter")
+                        time.sleep(0.02)
+                        pyautogui.hotkey("shift", "home")
+                        pyautogui.press("backspace")
+                        time.sleep(0.01)
+                    if line:
+                        pyautogui.write(line, interval=0.008)
+            else:
+                pyautogui.write(text_str, interval=0.008)
         elif send_keys:
             if clear_first:
                 send_keys("^a{DELETE}")

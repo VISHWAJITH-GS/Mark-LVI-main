@@ -464,6 +464,11 @@ def desktop_control(
         elif action == "stats":
             return get_desktop_stats()
 
+        elif action in ("type", "write", "type_text", "smart_type"):
+            text = params.get("text", "") or params.get("task", "") or params.get("code", "")
+            from actions.computer_control import computer_control
+            return computer_control({"action": "type", "text": text}, player=player)
+
         return _unknown(action or params.get("task", ""))
 
     except Exception as e:

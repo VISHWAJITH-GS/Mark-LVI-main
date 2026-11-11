@@ -176,28 +176,43 @@ def _user_profile() -> dict:
         pass
     return {}
 
-def _type(text: str, interval: float = 0.03) -> str:
+def _type(text: str, interval: float = 0.008) -> str:
     _require_pyautogui()
     time.sleep(0.3)
-    pyautogui.typewrite(text, interval=interval)
-    return f"Typed: {text[:60]}{'…' if len(text) > 60 else ''}"
+    text_str = str(text or "")
+    if "\n" in text_str:
+        lines = text_str.split("\n")
+        for idx, line in enumerate(lines):
+            if idx > 0:
+                pyautogui.press("enter")
+                time.sleep(0.02)
+                # Reset line to column 0 so editor's auto-indent does not compound
+                pyautogui.hotkey("shift", "home")
+                pyautogui.press("backspace")
+                time.sleep(0.01)
+            if line:
+                pyautogui.write(line, interval=interval)
+    else:
+        pyautogui.write(text_str, interval=interval)
+    return f"Typed: {text_str[:60]}{'…' if len(text_str) > 60 else ''}"
 
 
-def _smart_type(text: str, clear_first: bool = True) -> str:
+def _smart_type(text: str, clear_first: bool = True, use_clipboard: bool = False) -> str:
     _require_pyautogui()
     if clear_first:
         _clear_field()
         time.sleep(0.1)
 
-    if len(text) > 20 and _require_pyperclip():
+    # Use clipboard only if explicitly allowed and requested
+    if use_clipboard and _require_pyperclip():
         pyperclip.copy(text)
         time.sleep(0.1)
         paste_key = "command" if _get_os() == "mac" else "ctrl"
         pyautogui.hotkey(paste_key, "v")
         return f"Smart-typed (clipboard): {text[:60]}{'…' if len(text) > 60 else ''}"
 
-    pyautogui.typewrite(text, interval=0.04)
-    return f"Smart-typed: {text[:60]}{'…' if len(text) > 60 else ''}"
+    # Default to actual keystroke typing so platforms like SkillRack never block it
+    return _type(text, interval=0.008)
 
 
 def _click(x=None, y=None, button: str = "left", clicks: int = 1) -> str:

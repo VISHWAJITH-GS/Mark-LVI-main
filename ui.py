@@ -414,6 +414,205 @@ def keena_font(size: int, bold: bool = False, spacing: float = 0.0) -> QFont:
     return f
 
 
+class HudFadeOverlay(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w = self.width()
+        h = self.height()
+        if w <= 0 or h <= 0:
+            p.end()
+            return
+
+        fade_h = min(30, max(12, int(h * 0.18)))
+
+        # Top blur / gradient fade
+        top_grad = QLinearGradient(0, 0, 0, fade_h)
+        top_grad.setColorAt(0.0, QColor(14, 4, 12, 245))
+        top_grad.setColorAt(0.5, QColor(14, 4, 12, 175))
+        top_grad.setColorAt(0.85, QColor(14, 4, 12, 70))
+        top_grad.setColorAt(1.0, QColor(14, 4, 12, 0))
+        p.fillRect(QRect(0, 0, w, fade_h), top_grad)
+
+        # Bottom blur / gradient fade
+        bot_grad = QLinearGradient(0, h - fade_h, 0, h)
+        bot_grad.setColorAt(0.0, QColor(14, 4, 12, 0))
+        bot_grad.setColorAt(0.15, QColor(14, 4, 12, 70))
+        bot_grad.setColorAt(0.5, QColor(14, 4, 12, 175))
+        bot_grad.setColorAt(1.0, QColor(14, 4, 12, 245))
+        p.fillRect(QRect(0, h - fade_h, w, fade_h), bot_grad)
+
+        p.end()
+
+
+class HudConversationWidget(QTextEdit):
+    _stream_user_sig = pyqtSignal(str)
+    _stream_reply_sig = pyqtSignal(str)
+    _add_msg_sig = pyqtSignal(str, str)
+
+    def __init__(self, assistant_name: str = "JARVIS", parent=None):
+        super().__init__(parent)
+        self._asst_name = (assistant_name or "JARVIS").replace(".", "").strip().upper()
+        self.setReadOnly(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.document().setMaximumBlockCount(400)
+        self.setFont(QFont("Courier New", 9))
+        self.setStyleSheet(f"""
+            QTextEdit {{
+                background: transparent;
+                color: {C.TEXT};
+                border: none;
+                padding: 10px 4px;
+                selection-background-color: rgba(255, 77, 166, 0.35);
+            }}
+            QScrollBar:vertical, QScrollBar:horizontal {{
+                width: 0px !important;
+                height: 0px !important;
+                background: transparent !important;
+                border: none !important;
+            }}
+            QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{
+                width: 0px !important;
+                height: 0px !important;
+                background: transparent !important;
+                border: none !important;
+            }}
+            QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{
+                width: 0px !important;
+                height: 0px !important;
+                background: transparent !important;
+                border: none !important;
+            }}
+        """)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.verticalScrollBar().resize(0, 0)
+        self.verticalScrollBar().setMaximumWidth(0)
+        self.verticalScrollBar().hide()
+        self.horizontalScrollBar().resize(0, 0)
+        self.horizontalScrollBar().setMaximumHeight(0)
+        self.horizontalScrollBar().hide()
+        self.viewport().setAutoFillBackground(False)
+
+        self._messages: list[tuple[str, str]] = []
+        self._streaming_user: str = ""
+        self._streaming_reply: str = ""
+
+        # Top & bottom blur/gradient fade overlay
+        self._fade_overlay = HudFadeOverlay(self)
+
+        self._stream_user_sig.connect(self._on_stream_user)
+        self._stream_reply_sig.connect(self._on_stream_reply)
+        self._add_msg_sig.connect(self._on_add_msg)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if hasattr(self, "_fade_overlay") and self._fade_overlay:
+            self._fade_overlay.setGeometry(0, 0, self.width(), self.height())
+            self._fade_overlay.raise_()
+
+    def append_message(self, speaker: str, text: str):
+        self._add_msg_sig.emit(speaker, text)
+
+    def stream_user(self, text: str):
+        self._stream_user_sig.emit(text)
+
+    def stream_reply(self, text: str):
+        self._stream_reply_sig.emit(text)
+
+    def _on_stream_user(self, text: str):
+        self._streaming_user = str(text or "").strip()
+        self._render_conversation()
+
+    def _on_stream_reply(self, text: str):
+        self._streaming_reply = str(text or "").strip()
+        self._render_conversation()
+
+    def _on_add_msg(self, speaker: str, text: str):
+        clean = str(text or "").strip()
+        if not clean:
+            return
+        spk = speaker.lower().strip()
+        if spk == "you":
+            self._streaming_user = ""
+            if not (self._messages and self._messages[-1] == ("you", clean)):
+                self._messages.append(("you", clean))
+        elif spk in ("ai", "jarvis", self._asst_name.lower()):
+            self._streaming_reply = ""
+            if not (self._messages and self._messages[-1] == ("jarvis", clean)):
+                self._messages.append(("jarvis", clean))
+        else:
+            self._messages.append(("sys", clean))
+        self._render_conversation()
+
+    def _render_conversation(self):
+        html_parts = []
+        html_parts.append(f'<div style="font-family: \'Courier New\', monospace; color: {C.TEXT}; font-size: 11px;">')
+
+        for spk, txt in self._messages[-50:]:
+            escaped = (txt.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>"))
+            if spk == "you":
+                html_parts.append(
+                    f'<div style="margin-top: 6px; margin-bottom: 2px;">'
+                    f'<span style="color: {C.TEXT_DIM}; font-size: 9px; font-weight: bold; letter-spacing: 1.5px;">YOU</span>'
+                    f'</div>'
+                    f'<div style="color: #ffffff; margin-bottom: 8px; line-height: 1.35;">{escaped}</div>'
+                )
+            elif spk == "jarvis":
+                html_parts.append(
+                    f'<div style="margin-top: 6px; margin-bottom: 2px;">'
+                    f'<span style="color: {C.PRI}; font-size: 9px; font-weight: bold; letter-spacing: 1.5px;">{self._asst_name}</span>'
+                    f'</div>'
+                    f'<div style="color: {C.TEXT}; border-left: 2px solid {C.PRI}; padding-left: 6px; margin-bottom: 8px; line-height: 1.35;">{escaped}</div>'
+                )
+            else:
+                html_parts.append(
+                    f'<div style="color: {C.TEXT_DIM}; font-size: 10px; font-style: italic; margin-bottom: 4px;">{escaped}</div>'
+                )
+
+        if self._streaming_user:
+            esc = self._streaming_user.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+            html_parts.append(
+                f'<div style="margin-top: 6px; margin-bottom: 2px;">'
+                f'<span style="color: {C.TEXT_DIM}; font-size: 9px; font-weight: bold; letter-spacing: 1.5px;">YOU</span>'
+                f'</div>'
+                f'<div style="color: #ffffff; margin-bottom: 8px; line-height: 1.35;">{esc} <span style="color: {C.PRI};">...</span></div>'
+            )
+
+        if self._streaming_reply:
+            esc = self._streaming_reply.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+            html_parts.append(
+                f'<div style="margin-top: 6px; margin-bottom: 2px;">'
+                f'<span style="color: {C.PRI}; font-size: 9px; font-weight: bold; letter-spacing: 1.5px;">{self._asst_name}</span>'
+                f'</div>'
+                f'<div style="color: {C.TEXT}; border-left: 2px solid {C.PRI}; padding-left: 6px; margin-bottom: 8px; line-height: 1.35;">{esc} <span style="color: {C.PRI}; font-weight: bold;">█</span></div>'
+            )
+
+        html_parts.append('</div>')
+
+        bar = self.verticalScrollBar()
+        old_val = bar.value()
+        was_at_bottom = (bar.maximum() == 0) or (old_val >= bar.maximum() - 35)
+
+        self.setHtml("".join(html_parts))
+
+        if was_at_bottom or self._streaming_reply or self._streaming_user:
+            bar.setValue(bar.maximum())
+        else:
+            bar.setValue(old_val)
+
+    def clear_history(self):
+        self._messages.clear()
+        self._streaming_user = ""
+        self._streaming_reply = ""
+        self.setHtml("")
+
+
 class HudCanvas(QWidget):
     reactor_clicked = pyqtSignal()
 
@@ -428,6 +627,9 @@ class HudCanvas(QWidget):
         self.muted = False
         self.speaking = False
         self.hud_style = "core"
+
+        # Embedded Conversation History widget
+        self.conversation = HudConversationWidget(assistant_name=self._assistant_name, parent=self)
 
         # Audio & animation dynamics
         self._live_amp = 0.0
@@ -448,6 +650,7 @@ class HudCanvas(QWidget):
         self.mem = 0.0
         self.gemini_online = True
         self._big_mode = False
+        self._mini_mode = False
 
         self._last_t = time.time()
         self._step_t = time.time()
@@ -458,6 +661,44 @@ class HudCanvas(QWidget):
         self._tmr = QTimer(self)
         self._tmr.timeout.connect(self._step)
         self._tmr.start(16)           # 60 FPS animation
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._update_conversation_geometry()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._update_conversation_geometry()
+
+    def _update_conversation_geometry(self):
+        if not hasattr(self, "conversation") or not self.conversation:
+            return
+        if getattr(self, "_mini_mode", False) or getattr(self, "_big_mode", False):
+            self.conversation.hide()
+            return
+
+        w, h = self.width(), self.height()
+        if w <= 120 or h <= 120:
+            self.conversation.hide()
+            return
+
+        BASE_W = 420.0
+        BASE_H = 540.0
+        scale = min(w / BASE_W, h / BASE_H)
+        off_x = (w - BASE_W * scale) / 2.0
+        off_y = (h - BASE_H * scale) / 2.0
+
+        top_y = 348.0
+        bot_y = BASE_H - 14.0
+        conv_h = max(40.0, bot_y - top_y)
+
+        c_x = int(off_x + 18.0 * scale)
+        c_y = int(off_y + top_y * scale)
+        c_w = int((BASE_W - 36.0) * scale)
+        c_h = int(conv_h * scale)
+
+        self.conversation.setGeometry(c_x, c_y, c_w, c_h)
+        self.conversation.show()
 
     def glance(self, dx: float, dy: float, hold: float = 1.1) -> None:
         pass
@@ -503,8 +744,20 @@ class HudCanvas(QWidget):
         if stat:
             self.stat = str(stat)
 
+    def stream_user_text(self, text: str) -> None:
+        self.user_text = str(text or "").strip()
+        if hasattr(self, "conversation") and self.conversation:
+            self.conversation.stream_user(text)
+
+    def stream_reply_text(self, text: str) -> None:
+        self.reply_text = str(text or "").strip()
+        if hasattr(self, "conversation") and self.conversation:
+            self.conversation.stream_reply(text)
+
     def set_user_text(self, text: str) -> None:
         self.user_text = str(text or "").strip()
+        if hasattr(self, "conversation") and self.conversation:
+            self.conversation.append_message("you", self.user_text)
 
     def set_reply_text(self, text: str) -> None:
         new_text = str(text or "").strip()
@@ -512,14 +765,22 @@ class HudCanvas(QWidget):
         self.reply_text = new_text
         if not keep:
             self.reply_shown = 0.0
+        if hasattr(self, "conversation") and self.conversation:
+            self.conversation.append_message("jarvis", self.reply_text)
 
     def add_card(self, card_text: str) -> None:
         clean = str(card_text or "").strip()
         if clean:
             self.cards = (self.cards + [(clean, time.time())])[-3:]
 
+    def set_mini_mode(self, mini: bool) -> None:
+        self._mini_mode = bool(mini)
+        self._update_conversation_geometry()
+        self.update()
+
     def set_big_mode(self, big: bool) -> None:
         self._big_mode = bool(big)
+        self._update_conversation_geometry()
         self.update()
 
     def mousePressEvent(self, e):
@@ -539,6 +800,8 @@ class HudCanvas(QWidget):
                 main_w = self.window()
                 if hasattr(main_w, "_is_minimized_top") and not main_w._is_minimized_top:
                     main_w._normal_geom = main_w.geometry()
+                if hasattr(main_w, "_update_dots_overlay_position"):
+                    main_w._update_dots_overlay_position()
         super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e):
@@ -887,28 +1150,7 @@ class HudCanvas(QWidget):
             y += 18
         p.setOpacity(1.0)
 
-        # Conversation text
-        y = max(y + 4, cy + 166)
-        if self.user_text:
-            p.setFont(keena_font(8, True, 2))
-            p.setPen(rgba(DIM_COL, 210))
-            p.drawText(QRectF(26, y, 60, 14), Qt.AlignmentFlag.AlignLeft, "YOU")
-            p.setFont(keena_font(9))
-            p.setPen(rgba(TEXT_COL, 190))
-            p.drawText(QRectF(26, y + 14, w_d - 52, 34), Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextWordWrap, self.user_text[-120:])
-            y += 50
 
-        if self.reply_text:
-            p.setPen(QPen(rgba(accent, 170), 2))
-            p.drawLine(QPointF(20, y + 2), QPointF(20, y + 54))
-            p.setFont(keena_font(8, True, 2))
-            p.setPen(rgba(accent, 230))
-            p.drawText(QRectF(26, y, 80, 14), Qt.AlignmentFlag.AlignLeft, self._assistant_name.upper())
-            p.setFont(keena_font(10, True))
-            p.setPen(TEXT_COL)
-            shown = self.reply_text[:int(self.reply_shown)]
-            cursor = "█" if int(self.reply_shown) < len(self.reply_text) else ""
-            p.drawText(QRectF(26, y + 14, w_d - 52, 46), Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextWordWrap, shown[-140:] + cursor)
 
         p.restore()
         p.end()
@@ -4851,7 +5093,461 @@ class LeftSearchDock(QWidget):
         super().mouseReleaseEvent(e)
 
 
+class MinimizedDisplaysOverlay(QWidget):
+    dot_clicked = pyqtSignal(int)
+
+    def __init__(self, parent_main_win=None):
+        super().__init__(None)
+        self._main_win = parent_main_win
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+
+        self._vbox = QVBoxLayout(self)
+        self._vbox.setContentsMargins(4, 4, 4, 4)
+        self._vbox.setSpacing(6)
+        self._vbox.setAlignment(Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter)
+
+        self._buttons: dict[int, QPushButton] = {}
+
+    def update_displays(self, display_items: list[tuple[int, str]]):
+        while self._vbox.count():
+            item = self._vbox.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._buttons.clear()
+
+        if not display_items:
+            self.hide()
+            return
+
+        # Stack vertically in display number order above JARVIS:
+        # Display 1 closest to JARVIS at the bottom, Display 2 above it, Display 3 above that!
+        for disp_id, disp_title in sorted(display_items, key=lambda x: x[0], reverse=True):
+            btn = QPushButton(str(disp_id), self)
+            btn.setFixedSize(26, 26)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setToolTip(f"Display {disp_id}: {disp_title}\n(Click to restore)")
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+                        stop:0 #ffffff, stop:0.35 {C.PRI}, stop:0.75 #b30059, stop:1.0 rgba(14, 4, 12, 235));
+                    color: #ffffff;
+                    border: 1.5px solid {C.PRI};
+                    border-radius: 13px;
+                    font-family: 'Courier New';
+                    font-size: 10px;
+                    font-weight: bold;
+                }}
+                QPushButton:hover {{
+                    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+                        stop:0 #ffffff, stop:0.4 #ffd700, stop:0.8 #ff8800, stop:1.0 rgba(20, 10, 0, 245));
+                    border: 2px solid #ffd700;
+                    color: #ffffff;
+                }}
+            """)
+            btn.clicked.connect(lambda _, did=disp_id: self.dot_clicked.emit(did))
+            self._vbox.addWidget(btn)
+            self._buttons[disp_id] = btn
+
+        dot_count = len(display_items)
+        req_h = dot_count * 26 + (dot_count - 1) * 6 + 8
+        self.resize(36, req_h)
+        self.reposition()
+        self.show()
+        self.raise_()
+
+    def reposition(self):
+        if not self._main_win or not self.isVisible():
+            return
+        main_geom = self._main_win.geometry()
+        center_x = main_geom.x() + (main_geom.width() - self.width()) // 2
+        top_y = main_geom.y() - self.height() - 6
+        self.move(center_x, top_y)
+
+
+class JarvisDisplayWindow(QWidget):
+    closed = pyqtSignal(int)
+    minimized_requested = pyqtSignal(int)
+    _img_data_sig = pyqtSignal(bytes)
+
+    def __init__(self, display_id: int, name: str, content_type: str, source: str, title: str = "", parent=None):
+        super().__init__(parent)
+        self.display_id = display_id
+        self.display_name = name
+        self.content_type = (content_type or "image").lower()
+        self.source = source or ""
+        self.title_text = title or (Path(source).name if (source and os.path.exists(source)) else (source[:36] if source else "MEDIA"))
+
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.SubWindow)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.resize(680, 500)
+        self.setMinimumSize(320, 240)
+        self._drag_start = None
+
+        self._outer = QWidget(self)
+        self._outer.setObjectName("DisplayOuter")
+        self._outer.setStyleSheet(f"""
+            QWidget#DisplayOuter {{
+                background: rgba(10, 3, 10, 245);
+                border: 1px solid {C.PRI};
+                border-radius: 6px;
+            }}
+        """)
+
+        main_v = QVBoxLayout(self)
+        main_v.setContentsMargins(0, 0, 0, 0)
+        main_v.addWidget(self._outer)
+
+        v = QVBoxLayout(self._outer)
+        v.setContentsMargins(10, 8, 10, 10)
+        v.setSpacing(6)
+
+        hdr = QHBoxLayout()
+        hdr.setContentsMargins(2, 0, 2, 0)
+        hdr.setSpacing(8)
+
+        tag_lbl = QLabel(f"{self.display_name} // {self.title_text.upper()}")
+        tag_lbl.setFont(keena_font(8, bold=True, spacing=1.2))
+        tag_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        hdr.addWidget(tag_lbl)
+        hdr.addStretch()
+
+        self._min_btn = QPushButton("MIN")
+        self._min_btn.setFont(keena_font(7, bold=True))
+        self._min_btn.setFixedSize(32, 20)
+        self._min_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._min_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(30, 8, 26, 210);
+                color: {C.TEXT_DIM};
+                border: 1px solid {C.BORDER};
+                border-radius: 3px;
+            }}
+            QPushButton:hover {{
+                border-color: {C.PRI};
+                color: #ffffff;
+            }}
+        """)
+        self._min_btn.clicked.connect(self._on_min_btn_clicked)
+        hdr.addWidget(self._min_btn)
+
+        close_btn = QPushButton("X")
+        close_btn.setFont(keena_font(8, bold=True))
+        close_btn.setFixedSize(22, 20)
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(35, 8, 20, 210);
+                color: #ff6688;
+                border: 1px solid rgba(255, 102, 136, 0.4);
+                border-radius: 3px;
+            }}
+            QPushButton:hover {{
+                background: rgba(255, 51, 102, 0.45);
+                border-color: #ff3366;
+                color: #ffffff;
+            }}
+        """)
+        close_btn.clicked.connect(self.close)
+        hdr.addWidget(close_btn)
+        v.addLayout(hdr)
+
+        self._content_cont = QWidget()
+        self._content_cont.setStyleSheet("background: #020003; border-radius: 4px;")
+        cont_lay = QVBoxLayout(self._content_cont)
+        cont_lay.setContentsMargins(4, 4, 4, 4)
+
+        if self.content_type == "video" and HAVE_VIDEO:
+            self._setup_video(cont_lay)
+        elif self.content_type == "text":
+            self._setup_text(cont_lay)
+        else:
+            self._setup_image(cont_lay)
+
+        v.addWidget(self._content_cont, stretch=1)
+
+    def _on_min_btn_clicked(self):
+        self.hide()
+        self.minimized_requested.emit(self.display_id)
+
+    def changeEvent(self, e):
+        super().changeEvent(e)
+        if e.type() == QEvent.Type.WindowStateChange and self.isMinimized():
+            self.setWindowState(Qt.WindowState.WindowNoState)
+            self.hide()
+            self.minimized_requested.emit(self.display_id)
+
+    def _setup_text(self, lay: QVBoxLayout):
+        self._text_edit = QTextEdit()
+        self._text_edit.setReadOnly(True)
+        self._text_edit.setFrameShape(QFrame.Shape.NoFrame)
+        self._text_edit.setFont(QFont("Courier New", 10))
+        self._text_edit.setStyleSheet(f"""
+            QTextEdit {{
+                background: transparent;
+                color: {C.TEXT};
+                border: none;
+                padding: 10px 12px;
+                selection-background-color: rgba(255, 77, 166, 0.35);
+            }}
+            QScrollBar:vertical {{
+                background: rgba(14, 4, 12, 120);
+                width: 6px;
+                border: none;
+                margin: 0px;
+                border-radius: 3px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: rgba(255, 77, 166, 0.45);
+                border-radius: 3px;
+                min-height: 20px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {C.PRI};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+        """)
+        raw_text = self.source
+        if os.path.exists(self.source) and os.path.isfile(self.source):
+            try:
+                with open(self.source, "r", encoding="utf-8", errors="replace") as f:
+                    raw_text = f.read()
+            except Exception:
+                pass
+
+        if hasattr(self._text_edit, "setMarkdown"):
+            self._text_edit.setMarkdown(raw_text)
+        else:
+            self._text_edit.setPlainText(raw_text)
+        lay.addWidget(self._text_edit)
+
+    def _setup_image(self, lay: QVBoxLayout):
+        self._img_data_sig.connect(self._on_image_bytes_loaded)
+        self._img_lbl = QLabel()
+        self._img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._img_lbl.setStyleSheet("background: transparent;")
+        self._img_lbl.setText("FETCHING VISUAL FEED // INTEL ACTIVE...")
+        self._img_lbl.setFont(keena_font(8, bold=True))
+        lay.addWidget(self._img_lbl)
+        self._load_image()
+
+    def _load_image(self):
+        if not self.source:
+            self._img_lbl.setText("NO IMAGE SOURCE SPECIFIED")
+            return
+        if os.path.exists(self.source):
+            px = QPixmap(self.source)
+            if not px.isNull():
+                self._original_pixmap = px
+                self._update_scaled_image()
+                return
+
+        # Remote source: download on worker thread
+        t = threading.Thread(target=self._fetch_image_thread, daemon=True)
+        t.start()
+
+    def _download_image_bytes(self, url: str, headers: dict, timeout: int = 5) -> bytes | None:
+        try:
+            import urllib.request
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                if resp.status == 200:
+                    return resp.read()
+        except Exception:
+            pass
+        return None
+
+    def _search_image_fallback(self, query: str, headers: dict) -> bytes | None:
+        try:
+            from actions.web_search import _get_ddgs
+            DDGS = _get_ddgs()
+            with DDGS() as ddgs:
+                for r in ddgs.images(query, max_results=3):
+                    img_url = r.get("image")
+                    if not img_url:
+                        continue
+                    data = self._download_image_bytes(img_url, headers, timeout=4)
+                    if data:
+                        return data
+        except Exception as e:
+            print(f"[JarvisDisplayWindow] Fallback search error: {e}")
+        return None
+
+    def _fetch_image_thread(self):
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+        }
+        url = self.source
+        if "upload.wikimedia.org" in url and "/thumb/" in url:
+            m = re.match(r"(https?://upload\.wikimedia\.org/wikipedia/[^/]+)/thumb/([^/]+/[^/]+/[^/]+)/.*", url)
+            if m:
+                url = f"{m.group(1)}/{m.group(2)}"
+
+        data = None
+        if url.startswith(("http://", "https://")):
+            data = self._download_image_bytes(url, headers, timeout=6)
+
+        if not data:
+            query = self.title_text or Path(self.source.split("?")[0]).stem.replace("_", " ")
+            if query and not query.lower().startswith("display"):
+                data = self._search_image_fallback(query, headers)
+
+        self._img_data_sig.emit(data or b"")
+
+    def _on_image_bytes_loaded(self, data: bytes):
+        if data:
+            px = QPixmap()
+            px.loadFromData(data)
+            if not px.isNull():
+                self._original_pixmap = px
+                self._update_scaled_image()
+                return
+        self._img_lbl.setText("IMAGE RETRIEVAL FAILED // RE-TRY WITH SEARCH")
+        self._img_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; font-family: 'Courier New';")
+
+    def _update_scaled_image(self):
+        if hasattr(self, "_original_pixmap") and not self._original_pixmap.isNull():
+            w = max(100, self._content_cont.width() - 10)
+            h = max(100, self._content_cont.height() - 10)
+            scaled = self._original_pixmap.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            self._img_lbl.setPixmap(scaled)
+
+    def _setup_video(self, lay: QVBoxLayout):
+        try:
+            self._vid_player = QMediaPlayer(self)
+            self._vid_audio = QAudioOutput(self)
+            self._vid_player.setAudioOutput(self._vid_audio)
+
+            self._scene = QGraphicsScene(self)
+            self._vid_item = QGraphicsVideoItem()
+            self._scene.addItem(self._vid_item)
+
+            self._view = QGraphicsView(self._scene)
+            self._view.setStyleSheet("background: #000; border: none;")
+            self._view.setFrameShape(QGraphicsView.Shape.NoFrame)
+            self._view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self._view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            lay.addWidget(self._view, stretch=1)
+
+            self._vid_player.setVideoOutput(self._vid_item)
+
+            c_bar = QHBoxLayout()
+            c_bar.setContentsMargins(4, 2, 4, 2)
+            c_bar.setSpacing(8)
+
+            self._play_btn = QPushButton("PAUSE")
+            self._play_btn.setFont(keena_font(8, bold=True))
+            self._play_btn.setFixedSize(50, 22)
+            self._play_btn.setStyleSheet(f"background: {C.PANEL2}; color: {C.TEXT}; border: 1px solid {C.BORDER}; border-radius: 3px;")
+            self._play_btn.clicked.connect(self._toggle_playback)
+            c_bar.addWidget(self._play_btn)
+
+            self._mute_btn = QPushButton("SOUND OFF")
+            self._mute_btn.setFont(keena_font(8, bold=True))
+            self._mute_btn.setFixedSize(70, 22)
+            self._mute_btn.setStyleSheet(f"background: {C.PANEL2}; color: {C.TEXT}; border: 1px solid {C.BORDER}; border-radius: 3px;")
+            self._mute_btn.clicked.connect(self._toggle_sound)
+            c_bar.addWidget(self._mute_btn)
+            c_bar.addStretch()
+
+            lay.addLayout(c_bar)
+
+            if os.path.exists(self.source):
+                self._vid_player.setSource(QUrl.fromLocalFile(self.source))
+            else:
+                self._vid_player.setSource(QUrl(self.source))
+            self._vid_player.play()
+        except Exception as e:
+            print(f"[JarvisDisplayWindow] Video setup error: {e}")
+            self._setup_image(lay)
+
+    def _toggle_playback(self):
+        if hasattr(self, "_vid_player"):
+            if self._vid_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                self._vid_player.pause()
+                self._play_btn.setText("PLAY")
+            else:
+                self._vid_player.play()
+                self._play_btn.setText("PAUSE")
+
+    def _toggle_sound(self):
+        if hasattr(self, "_vid_audio"):
+            is_muted = not self._vid_audio.isMuted()
+            self._vid_audio.setMuted(is_muted)
+            self._mute_btn.setText("SOUND OFF" if is_muted else "SOUND ON")
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if hasattr(self, "_original_pixmap"):
+            self._update_scaled_image()
+        if hasattr(self, "_view") and hasattr(self, "_vid_item"):
+            w = self._view.width()
+            h = self._view.height()
+            self._scene.setSceneRect(0, 0, w, h)
+            self._vid_item.setSize(QSizeF(w, h))
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._drag_start = e.globalPosition().toPoint()
+            self._win_start = self.pos()
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if getattr(self, "_drag_start", None) and e.buttons() == Qt.MouseButton.LeftButton:
+            delta = e.globalPosition().toPoint() - self._drag_start
+            self.move(self._win_start + delta)
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        self._drag_start = None
+        super().mouseReleaseEvent(e)
+
+    def closeEvent(self, e):
+        if hasattr(self, "_vid_player"):
+            try:
+                self._vid_player.stop()
+            except Exception:
+                pass
+        self.closed.emit(self.display_id)
+        super().closeEvent(e)
+
+
+class ArmouryCrateTelemetry(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._mode = "Performance"
+        self.lbl_cpu_usage = QLabel("CPU: 0%")
+        self.lbl_gpu_usage = QLabel("GPU: 0%")
+        self.lbl_cpu_temp = QLabel("TEMP: 0°C")
+        self.bar_cpu = QProgressBar()
+        self.bar_gpu = QProgressBar()
+        self.bar_cpu.setRange(0, 100)
+        self.bar_gpu.setRange(0, 100)
+
+    def set_operating_mode(self, mode: str):
+        self._mode = str(mode)
+
+    def update_metrics(self, data: dict):
+        cpu = data.get("cpu", 0.0)
+        gpu = data.get("gpu", 0.0)
+        tmp = data.get("tmp", 0.0)
+        self.lbl_cpu_usage.setText(f"CPU: {int(cpu)}%")
+        self.lbl_gpu_usage.setText(f"GPU: {int(gpu)}%")
+        self.lbl_cpu_temp.setText(f"TEMP: {int(tmp)}°C")
+        self.bar_cpu.setValue(int(cpu))
+        self.bar_gpu.setValue(int(gpu))
+
+
 class MainWindow(QMainWindow):
+    _open_display_sig = pyqtSignal(str, str, str)
+    _focus_display_sig = pyqtSignal(int)
+    _close_display_sig = pyqtSignal(int)
+    _stream_user_sig = pyqtSignal(str)
+    _stream_reply_sig = pyqtSignal(str)
     _log_sig        = pyqtSignal(str)
     _state_sig      = pyqtSignal(str)
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
@@ -5067,9 +5763,6 @@ class MainWindow(QMainWindow):
         hud_v.addWidget(self.hud_ctrl_bar, stretch=0)
 
         # ── Expanded Cyber Drawer (kept invisible / backward compatibility)
-        self._drawer = self._build_cyber_drawer()
-        self._drawer.setVisible(False)
-
         central = QWidget()
         central.setStyleSheet("background: transparent;")
         self.setCentralWidget(central)
@@ -5078,6 +5771,24 @@ class MainWindow(QMainWindow):
         self._main_h.setContentsMargins(0, 0, 0, 0)
         self._main_h.setSpacing(0)
         self._main_h.addWidget(self.hud_box)
+
+        # ── Expanded Cyber Drawer
+        self._drawer = self._build_cyber_drawer(central)
+        self._drawer.setVisible(False)
+        self._main_h.addWidget(self._drawer)
+
+        self._armoury_telemetry = ArmouryCrateTelemetry(self)
+        self._displays: dict[int, JarvisDisplayWindow] = {}
+        self._display_counter: int = 0
+        self._minimized_display_ids: set[int] = set()
+        self._dots_overlay = MinimizedDisplaysOverlay(self)
+        self._dots_overlay.dot_clicked.connect(self._on_restore_display)
+
+        self._open_display_sig.connect(self._on_open_display)
+        self._focus_display_sig.connect(self._on_focus_display)
+        self._close_display_sig.connect(self._on_close_display_win)
+        self._stream_user_sig.connect(self._on_stream_user)
+        self._stream_reply_sig.connect(self._on_stream_reply)
 
         # Edge-docked components:
         # 1. Chat log at bottom center of screen (long width, short height)
@@ -5154,11 +5865,19 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
-        if hasattr(self, "bottom_chat_dock") and not self.bottom_chat_dock.isVisible():
-            self.bottom_chat_dock.show()
 
     def closeEvent(self, event):
         self._is_closed = True
+        if hasattr(self, "_dots_overlay"):
+            self._dots_overlay.close()
+        if hasattr(self, "_displays"):
+            for win in list(self._displays.values()):
+                try:
+                    win.close()
+                except Exception:
+                    pass
+            self._displays.clear()
+            self._minimized_display_ids.clear()
         if hasattr(self, "bottom_chat_dock"):
             self.bottom_chat_dock.close()
         if hasattr(self, "left_search_dock"):
@@ -5166,11 +5885,6 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def toggle_minimize_top(self):
-        """
-        Minimizes the Arc Reactor HUD to the center-top of the screen at 80% scale,
-        or restores it back to normal position. Triggered by clicking the Arc Reactor
-        or the ▲ TOP button.
-        """
         screen = QApplication.primaryScreen().availableGeometry()
         if getattr(self, "_is_minimized_top", False):
             target = getattr(self, "_normal_geom", None)
@@ -5179,27 +5893,155 @@ class MainWindow(QMainWindow):
                 init_y = max(screen.top() + 20, screen.bottom() - 580 - 24)
                 target = QRect(init_x, init_y, 420, 580)
             self._is_minimized_top = False
+            self.hud.set_mini_mode(False)
             if hasattr(self, "_hud_mini_btn"):
-                self._hud_mini_btn.setText("▲ TOP")
-                self._hud_mini_btn.setToolTip("Minimize Arc Reactor to Center-Top (80% scale)")
+                self._hud_mini_btn.setText("MINI")
+                self._hud_mini_btn.setToolTip("Minimize to bottom-left")
         else:
             self._normal_geom = self.geometry()
-            target_w = int(420 * 0.8)
-            target_h = int(580 * 0.8)
-            target_x = screen.left() + (screen.width() - target_w) // 2
-            target_y = screen.top() + 14
+            target_w = 58
+            target_h = 58
+            target_x = screen.left() + 24
+            target_y = screen.bottom() - 58 - 24
             target = QRect(target_x, target_y, target_w, target_h)
             self._is_minimized_top = True
+            self.hud.set_mini_mode(True)
             if hasattr(self, "_hud_mini_btn"):
-                self._hud_mini_btn.setText("▼ NORM")
-                self._hud_mini_btn.setToolTip("Restore Arc Reactor to normal position")
+                self._hud_mini_btn.setText("RESTORE")
+                self._hud_mini_btn.setToolTip("Restore Arc Reactor")
 
         self._geom_anim = QPropertyAnimation(self, b"geometry")
-        self._geom_anim.setDuration(350)
+        self._geom_anim.setDuration(300)
         self._geom_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._geom_anim.setStartValue(self.geometry())
         self._geom_anim.setEndValue(target)
         self._geom_anim.start()
+
+    def snap_to_corner(self, corner: str):
+        self._active_corner = corner.upper()
+        screen = QApplication.primaryScreen().availableGeometry()
+        w, h = self.width(), self.height()
+        margin = 24
+        if self._active_corner == "TL":
+            target = QPoint(screen.left() + margin, screen.top() + margin)
+        elif self._active_corner == "TR":
+            target = QPoint(screen.right() - w - margin, screen.top() + margin)
+        elif self._active_corner == "BL":
+            target = QPoint(screen.left() + margin, screen.bottom() - h - margin)
+        else:
+            target = QPoint(screen.right() - w - margin, screen.bottom() - h - margin)
+
+        self._pos_anim = QPropertyAnimation(self, b"pos")
+        self._pos_anim.setDuration(250)
+        self._pos_anim.setStartValue(self.pos())
+        self._pos_anim.setEndValue(target)
+        self._pos_anim.start()
+
+    def cycle_corners(self):
+        order = ["BR", "BL", "TL", "TR"]
+        curr = getattr(self, "_active_corner", "BR")
+        idx = (order.index(curr) + 1) % len(order) if curr in order else 0
+        self.snap_to_corner(order[idx])
+
+    def expand_display(self):
+        self._toggle_expanded(True)
+
+    def collapse_display(self):
+        self._toggle_expanded(False)
+
+    def _on_open_display(self, content_type: str, source: str, title: str) -> int:
+        self._display_counter += 1
+        d_id = self._display_counter
+        name = f"DISPLAY {d_id}"
+        win = JarvisDisplayWindow(d_id, name, content_type, source, title)
+        self._displays[d_id] = win
+        win.closed.connect(self._on_display_closed)
+        win.minimized_requested.connect(self._on_display_minimized)
+
+        screen = QApplication.primaryScreen().availableGeometry()
+        off = (d_id - 1) * 30
+        win.move(max(screen.left() + 40, screen.center().x() - win.width() // 2 + off),
+                 max(screen.top() + 40, screen.center().y() - win.height() // 2 + off))
+        win.show()
+        win.raise_()
+        win.activateWindow()
+        return d_id
+
+    def _on_display_minimized(self, d_id: int):
+        self._minimized_display_ids.add(d_id)
+        self._update_dots_overlay()
+
+    def _on_restore_display(self, d_id: int):
+        self._minimized_display_ids.discard(d_id)
+        win = self._displays.get(d_id)
+        if win:
+            win.setWindowState(Qt.WindowState.WindowNoState)
+            win.show()
+            win.raise_()
+            win.activateWindow()
+        self._update_dots_overlay()
+
+    def _on_focus_display(self, d_id: int) -> bool:
+        self._minimized_display_ids.discard(d_id)
+        win = self._displays.get(d_id)
+        if win:
+            win.setWindowState(Qt.WindowState.WindowNoState)
+            win.show()
+            win.raise_()
+            win.activateWindow()
+            screen = QApplication.primaryScreen().availableGeometry()
+            cx = screen.center().x() - win.width() // 2
+            cy = screen.center().y() - win.height() // 2
+            win.move(cx, cy)
+            self._update_dots_overlay()
+            return True
+        return False
+
+    def _on_display_closed(self, d_id: int):
+        self._minimized_display_ids.discard(d_id)
+        self._displays.pop(d_id, None)
+        self._update_dots_overlay()
+
+    def _on_close_display_win(self, d_id: int):
+        if d_id <= 0:
+            for win in list(self._displays.values()):
+                try:
+                    win.close()
+                except Exception:
+                    pass
+            self._displays.clear()
+            self._minimized_display_ids.clear()
+        else:
+            win = self._displays.pop(d_id, None)
+            self._minimized_display_ids.discard(d_id)
+            if win:
+                try:
+                    win.close()
+                except Exception:
+                    pass
+        self._update_dots_overlay()
+
+    def _update_dots_overlay(self):
+        items = []
+        for did in sorted(list(self._minimized_display_ids)):
+            win = self._displays.get(did)
+            title = win.title_text if win else f"Display {did}"
+            items.append((did, title))
+        self._dots_overlay.update_displays(items)
+
+    def _update_dots_overlay_position(self):
+        if hasattr(self, "_dots_overlay") and self._dots_overlay.isVisible():
+            self._dots_overlay.reposition()
+
+    def _on_stream_user(self, text: str):
+        self.hud.stream_user_text(text)
+
+    def _on_stream_reply(self, text: str):
+        self.hud.stream_reply_text(text)
+
+    def moveEvent(self, e):
+        super().moveEvent(e)
+        self._update_dots_overlay_position()
 
     def toggle_chat_dock(self):
         """Toggle bottom chat dock visibility."""
@@ -5317,33 +6159,25 @@ class MainWindow(QMainWindow):
             """)
             return b
 
-        self._hud_mute_btn = _btn("🎙 MIC", "Mute/Unmute microphone (F4)")
+        self._hud_mute_btn = _btn("MIC", "Mute/Unmute microphone")
         self._hud_mute_btn.clicked.connect(self._toggle_mute)
         lay.addWidget(self._hud_mute_btn)
 
-        self._hud_ptt_btn = _btn("🔴 PTT", "Hold to talk (Push-To-Talk)")
-        self._hud_ptt_btn.pressed.connect(lambda: self.ptt_hold(True) if self.ptt_hold else None)
-        self._hud_ptt_btn.released.connect(lambda: self.ptt_hold(False) if self.ptt_hold else None)
-        lay.addWidget(self._hud_ptt_btn)
+        self._hud_exp_btn = _btn("EXPAND", "Expand cyber drawer")
+        self._hud_exp_btn.clicked.connect(lambda: self._toggle_expanded(not self._expanded))
+        lay.addWidget(self._hud_exp_btn)
 
-        self._hud_stop_btn = _btn("⏹ STOP", "Interrupt assistant mid-speech [ESC]")
-        self._hud_stop_btn.clicked.connect(self._do_interrupt)
-        lay.addWidget(self._hud_stop_btn)
-
-        self._hud_chat_btn = _btn("💬 CHAT", "Toggle Bottom Chat Log Dock")
+        self._hud_chat_btn = _btn("CHAT", "Toggle Bottom Chat Dock")
         self._hud_chat_btn.clicked.connect(self.toggle_chat_dock)
         lay.addWidget(self._hud_chat_btn)
 
-        self._hud_mini_btn = _btn("▲ TOP", "Minimize Arc Reactor to Center-Top (80% scale)")
+        self._hud_mini_btn = _btn("MINI", "Minimize to bottom-left")
         self._hud_mini_btn.clicked.connect(self.toggle_minimize_top)
         lay.addWidget(self._hud_mini_btn)
 
-        self._hud_exp_btn = self._hud_mini_btn
-
-        self._hud_cfg_btn = _btn("⚙", "Settings & Customization")
-        self._hud_cfg_btn.setFixedWidth(28)
-        self._hud_cfg_btn.clicked.connect(self._open_customize)
-        lay.addWidget(self._hud_cfg_btn)
+        self._hud_close_btn = _btn("CLOSE", "Close JARVIS HUD")
+        self._hud_close_btn.clicked.connect(self.close)
+        lay.addWidget(self._hud_close_btn)
 
         return bar
 
@@ -5373,8 +6207,8 @@ class MainWindow(QMainWindow):
             }}
         """
 
-    def _build_cyber_drawer(self) -> QWidget:
-        w = QWidget()
+    def _build_cyber_drawer(self, parent=None) -> QWidget:
+        w = QWidget(parent)
         w.setFixedWidth(610)
         w.setStyleSheet(f"""
             QWidget#CyberDrawer {{
@@ -5622,15 +6456,14 @@ class MainWindow(QMainWindow):
         else:
             self._expanded = bool(state)
 
-        if hasattr(self, "bottom_chat_dock"):
-            if self._expanded:
-                self.bottom_chat_dock.show()
-                self.bottom_chat_dock.raise_()
-            else:
-                self.bottom_chat_dock.hide()
-
         if hasattr(self, "_drawer"):
             self._drawer.setVisible(self._expanded)
+        if hasattr(self, "_hud_exp_btn"):
+            self._hud_exp_btn.setText("COLLAPSE" if self._expanded else "EXPAND")
+        if self._expanded:
+            self.resize(800, self.height())
+        else:
+            self.resize(420, self.height())
 
     def _toggle_fullscreen(self):
         self._is_fullscreen = not getattr(self, "_is_fullscreen", False)
@@ -5677,6 +6510,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_drag_start") and self._drag_start and e.buttons() == Qt.MouseButton.LeftButton:
             delta = e.globalPosition().toPoint() - self._drag_start
             self.move(self._win_start + delta)
+            self._update_dots_overlay_position()
         super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e):
@@ -6893,8 +7727,8 @@ class MainWindow(QMainWindow):
         self._content_panel.show()
         if hasattr(self, "left_search_dock"):
             self.left_search_dock.popup(title, _time.strftime("%H:%M:%S"))
-        if not getattr(self, "_expanded", False):
-            self._toggle_expanded(True)
+        if hasattr(self, "_drawer"):
+            self._drawer.setVisible(False)
         if hasattr(self, "_drawer_tabs"):
             self._drawer_tabs.setCurrentIndex(0)
 
@@ -8034,7 +8868,7 @@ class MainWindow(QMainWindow):
     def _style_mute_btn(self):
         if hasattr(self, "_hud_mute_btn"):
             if self._muted:
-                self._hud_mute_btn.setText("🔇 MUTED")
+                self._hud_mute_btn.setText("MUTED")
                 self._hud_mute_btn.setStyleSheet(f"""
                     QPushButton {{
                         background: rgba(80, 10, 20, 220);
@@ -8044,7 +8878,7 @@ class MainWindow(QMainWindow):
                     }}
                 """)
             else:
-                self._hud_mute_btn.setText("🎙 MIC")
+                self._hud_mute_btn.setText("MIC")
                 self._hud_mute_btn.setStyleSheet(f"""
                     QPushButton {{
                         background: rgba(30, 8, 26, 210);
@@ -8520,3 +9354,62 @@ class JarvisUI:
     def stop_speaking(self):
         if not self.muted:
             self.set_state("LISTENING")
+
+    def open_display(self, content_type: str, source: str, title: str = "") -> int:
+        if not self._is_alive():
+            return 0
+        from PyQt6.QtCore import QThread
+        app = QApplication.instance()
+        if app and QThread.currentThread() == app.thread():
+            return self._win._on_open_display(content_type, source, title)
+        res = []
+        ev = threading.Event()
+        def _invoke():
+            try:
+                res.append(self._win._on_open_display(content_type, source, title))
+            finally:
+                ev.set()
+        QTimer.singleShot(0, _invoke)
+        ev.wait(timeout=5.0)
+        return res[0] if res else 0
+
+    def focus_display(self, display_id: int) -> bool:
+        if not self._is_alive():
+            return False
+        from PyQt6.QtCore import QThread
+        app = QApplication.instance()
+        if app and QThread.currentThread() == app.thread():
+            return self._win._on_focus_display(int(display_id))
+        res = []
+        ev = threading.Event()
+        def _invoke():
+            try:
+                res.append(self._win._on_focus_display(int(display_id)))
+            finally:
+                ev.set()
+        QTimer.singleShot(0, _invoke)
+        ev.wait(timeout=5.0)
+        return res[0] if res else False
+
+    def close_display_window(self, display_id: int = 0) -> None:
+        if not self._is_alive():
+            return
+        self._win._close_display_sig.emit(int(display_id))
+
+    def get_open_displays(self) -> list[dict]:
+        if not self._is_alive():
+            return []
+        res = []
+        for did, win in self._win._displays.items():
+            res.append({"id": did, "name": win.display_name, "title": win.title_text, "type": win.content_type})
+        return res
+
+    def stream_user_text(self, text: str) -> None:
+        if not self._is_alive():
+            return
+        self._win._stream_user_sig.emit(str(text or ""))
+
+    def stream_reply_text(self, text: str) -> None:
+        if not self._is_alive():
+            return
+        self._win._stream_reply_sig.emit(str(text or ""))

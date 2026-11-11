@@ -483,15 +483,28 @@ def press_enter():   pyautogui.press("enter")
 def press_escape():  pyautogui.press("escape")
 def press_key(key: str): pyautogui.press(key)
 
-def type_text(text: str, press_enter_after: bool = False):
+def type_text(text: str, press_enter_after: bool = False, use_clipboard: bool = False):
     if not text:
         return
-    if _PYPERCLIP:
+    if use_clipboard and _PYPERCLIP:
         pyperclip.copy(str(text))
         time.sleep(0.15)
         paste()
     else:
-        pyautogui.write(str(text), interval=0.03)
+        text_str = str(text)
+        if "\n" in text_str:
+            lines = text_str.split("\n")
+            for idx, line in enumerate(lines):
+                if idx > 0:
+                    pyautogui.press("enter")
+                    time.sleep(0.02)
+                    pyautogui.hotkey("shift", "home")
+                    pyautogui.press("backspace")
+                    time.sleep(0.01)
+                if line:
+                    pyautogui.write(line, interval=0.008)
+        else:
+            pyautogui.write(text_str, interval=0.008)
     if press_enter_after:
         time.sleep(0.1)
         pyautogui.press("enter")

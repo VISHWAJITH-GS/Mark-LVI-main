@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt, QPoint
 from PyQt6.QtGui import QColor
 
 import ui
-from ui import JarvisUI, MainWindow, HudCanvas, BottomChatDock, LeftSearchDock, C
+from ui import JarvisUI, MainWindow, HudCanvas, HudConversationWidget, BottomChatDock, LeftSearchDock, C
 
 app = QApplication.instance() or QApplication(sys.argv)
 
@@ -106,33 +106,43 @@ class TestKeenaHudTransformation(unittest.TestCase):
         self.assertFalse(self.win._muted)
         self.assertFalse(hud.muted)
 
-    def test_06_minimize_to_center_top_and_restore(self):
-        """Test Arc Reactor minimizes to center top at 80% scale and restores on click."""
+    def test_06_minimize_to_bottom_left_and_restore(self):
+        """Test Arc Reactor minimizes ONLY the circle element to favicon size at bottom-left and restores on click."""
         screen = QApplication.primaryScreen().availableGeometry()
         self.assertEqual(self.win.width(), 420)
         self.assertEqual(self.win.height(), 580)
         self.assertFalse(self.win._is_minimized_top)
+        self.assertFalse(self.win.hud._mini_mode)
 
-        # Click or toggle minimize to center top
+        # Click or toggle minimize to bottom left
         self.win.toggle_minimize_top()
-        if hasattr(self.win, "_anim") and self.win._anim:
-            self.win._anim.stop()
+        if hasattr(self.win, "_geom_anim") and self.win._geom_anim:
+            self.win._geom_anim.setCurrentTime(300)
+            self.win._geom_anim.stop()
         self.assertTrue(self.win._is_minimized_top)
-        target_w = int(420 * 0.8)
-        target_h = int(580 * 0.8)
-        self.assertEqual(target_w, 336)
-        self.assertEqual(target_h, 464)
+        self.assertTrue(self.win.hud._mini_mode)
+        # Verify minimized position at bottom-left
+        self.assertEqual(self.win.x(), screen.left() + 24)
+        self.assertEqual(self.win.y(), screen.bottom() - 58 - 24)
 
         # Click reactor animation again to restore to normal position
         self.win.hud.reactor_clicked.emit()
-        if hasattr(self.win, "_anim") and self.win._anim:
-            self.win._anim.stop()
+        if hasattr(self.win, "_geom_anim") and self.win._geom_anim:
+            self.win._geom_anim.setCurrentTime(300)
+            self.win._geom_anim.stop()
         self.assertFalse(self.win._is_minimized_top)
+        self.assertFalse(self.win.hud._mini_mode)
 
-    def test_07_bottom_chat_dock_scattered_edge(self):
-        """Test bottom center chat dock: long width, short height, command input."""
+    def test_07_bottom_chat_dock_pop_up_only_on_selection(self):
+        """Test bottom chat dock does not pop up automatically, only when selected."""
         chat_dock = self.win.bottom_chat_dock
         self.assertIsInstance(chat_dock, BottomChatDock)
+        # Initially hidden until selected by user
+        self.assertFalse(chat_dock.isVisible())
+
+        # Toggle via CHAT button opens it
+        self.win.toggle_chat_dock()
+        self.assertTrue(chat_dock.isVisible())
         screen = QApplication.primaryScreen().availableGeometry()
 
         # Geometry check: long width and short height
@@ -149,17 +159,26 @@ class TestKeenaHudTransformation(unittest.TestCase):
         self.win._send()
         self.assertEqual(self.win.hud.user_text, "status report")
 
-    def test_08_left_search_dock_pop_up(self):
-        """Test search display pops up along the left edge of the screen."""
+        # Toggle again hides it
+        self.win.toggle_chat_dock()
+        self.assertFalse(chat_dock.isVisible())
+
+    def test_08_left_search_dock_pop_up_alone(self):
+        """Test search display pops up along the left edge of the screen ALONE."""
         search_dock = self.win.left_search_dock
         self.assertIsInstance(search_dock, LeftSearchDock)
         screen = QApplication.primaryScreen().availableGeometry()
 
         # Initially hidden until search/content is displayed
+        self.assertFalse(search_dock.isVisible())
+        self.assertFalse(self.win._drawer.isVisible())
+
         self.win._show_content("TRENDS IN AI", "Rapid adoption of multi-agent systems.")
         self.assertTrue(search_dock.isVisible())
         self.assertEqual(search_dock.x(), screen.left() + 16)
         self.assertTrue(self.win._content_panel.isVisible())
+        # Drawer remains hidden so search appears alone!
+        self.assertFalse(self.win._drawer.isVisible())
 
         # Dismiss hides dock
         search_dock.hide()
@@ -196,6 +215,263 @@ class TestKeenaHudTransformation(unittest.TestCase):
         finally:
             ui_facade._win.close()
             ui_facade._win.deleteLater()
+
+    def test_11_drawer_attached_inside_main_window(self):
+        """Test remaining components (Cyber Drawer) attach directly to MainWindow when expanded."""
+        self.assertFalse(self.win._drawer.isVisible())
+        self.assertEqual(self.win.width(), 420)
+        # Verify _drawer is a child widget of MainWindow's central widget layout
+        self.assertEqual(self.win._drawer.parent(), self.win.centralWidget())
+
+        # Expand drawer
+        self.win._toggle_expanded(True)
+        self.assertTrue(self.win._drawer.isVisible())
+        self.assertGreater(self.win.width(), 420)
+
+        # Collapse drawer
+        self.win._toggle_expanded(False)
+        self.assertFalse(self.win._drawer.isVisible())
+        self.assertEqual(self.win.width(), 420)
+
+    def test_12_armoury_crate_telemetry(self):
+        """Test ASUS Armoury Crate telemetry dashboard with operating modes and live metrics."""
+        telemetry = self.win._armoury_telemetry
+        self.assertIsNotNone(telemetry)
+
+        # Verify initial mode
+        self.assertEqual(telemetry._mode, "Performance")
+
+        # Test mode switching
+        telemetry.set_operating_mode("Silent")
+        self.assertEqual(telemetry._mode, "Silent")
+        telemetry.set_operating_mode("Turbo")
+        self.assertEqual(telemetry._mode, "Turbo")
+        telemetry.set_operating_mode("Windows®")
+        self.assertEqual(telemetry._mode, "Windows®")
+
+        # Test metrics update
+        telemetry.update_metrics({"cpu": 45.0, "gpu": 60.0, "tmp": 72.0, "net": 2.5})
+        self.assertIn("45", telemetry.lbl_cpu_usage.text())
+        self.assertIn("60", telemetry.lbl_gpu_usage.text())
+        self.assertIn("72", telemetry.lbl_cpu_temp.text())
+        self.assertGreater(telemetry.bar_cpu.value(), 0)
+        self.assertGreater(telemetry.bar_gpu.value(), 0)
+
+    def test_13_window_controls_and_corner_snapping(self):
+        """Test corner snapping (TL, TR, BL, BR), maximize, expand, collapse and close."""
+        screen = QApplication.primaryScreen().availableGeometry()
+
+        # Corner: Top-Left
+        self.win.snap_to_corner("TL")
+        if hasattr(self.win, "_pos_anim") and self.win._pos_anim:
+            self.win._pos_anim.setCurrentTime(280)
+            self.win._pos_anim.stop()
+        self.assertEqual(self.win.x(), screen.left() + 24)
+        self.assertEqual(self.win.y(), screen.top() + 24)
+
+        # Corner: Top-Right
+        self.win.snap_to_corner("TR")
+        if hasattr(self.win, "_pos_anim") and self.win._pos_anim:
+            self.win._pos_anim.setCurrentTime(280)
+            self.win._pos_anim.stop()
+        self.assertEqual(self.win.x(), screen.right() - self.win.width() - 24)
+        self.assertEqual(self.win.y(), screen.top() + 24)
+
+        # Corner: Bottom-Left
+        self.win.snap_to_corner("BL")
+        if hasattr(self.win, "_pos_anim") and self.win._pos_anim:
+            self.win._pos_anim.setCurrentTime(280)
+            self.win._pos_anim.stop()
+        self.assertEqual(self.win.x(), screen.left() + 24)
+        self.assertEqual(self.win.y(), screen.bottom() - self.win.height() - 24)
+
+        # Corner: Bottom-Right
+        self.win.snap_to_corner("BR")
+        if hasattr(self.win, "_pos_anim") and self.win._pos_anim:
+            self.win._pos_anim.setCurrentTime(280)
+            self.win._pos_anim.stop()
+        self.assertEqual(self.win.x(), screen.right() - self.win.width() - 24)
+        self.assertEqual(self.win.y(), screen.bottom() - self.win.height() - 24)
+
+        # Cycle corners
+        self.win.cycle_corners()
+        self.assertEqual(self.win._active_corner, "BL")
+
+        # Test expand and collapse methods
+        self.win.expand_display()
+        self.assertTrue(self.win._drawer.isVisible())
+        self.win.collapse_display()
+        self.assertFalse(self.win._drawer.isVisible())
+
+        # Test chat log and speech synchronization
+        self.win._on_log_line("You: Hello Jarvis")
+        self.assertEqual(self.win.hud.user_text, "Hello Jarvis")
+        self.win._on_log_line("JARVIS: Online and standing by.")
+        self.assertEqual(self.win.hud.reply_text, "Online and standing by.")
+
+    def test_14_clean_hud_controls_no_top_buttons_and_no_icons(self):
+        """Verify removal of top buttons, removal of PTT/STOP/CORNER/CFG, and clean button labels."""
+        # Verify no hud_top_bar
+        self.assertFalse(hasattr(self.win, "hud_top_bar"))
+
+        # Verify bottom control buttons
+        self.assertTrue(hasattr(self.win, "_hud_mute_btn"))
+        self.assertTrue(hasattr(self.win, "_hud_exp_btn"))
+        self.assertTrue(hasattr(self.win, "_hud_chat_btn"))
+        self.assertTrue(hasattr(self.win, "_hud_mini_btn"))
+        self.assertTrue(hasattr(self.win, "_hud_close_btn"))
+
+        # Verify removed buttons do not exist
+        self.assertFalse(hasattr(self.win, "_hud_ptt_btn"))
+        self.assertFalse(hasattr(self.win, "_hud_stop_btn"))
+        self.assertFalse(hasattr(self.win, "_hud_corner_btn"))
+        self.assertFalse(hasattr(self.win, "_hud_cfg_btn"))
+
+        # Verify button text has no emojis or unicode icons
+        self.assertEqual(self.win._hud_mute_btn.text(), "MIC")
+        self.assertEqual(self.win._hud_exp_btn.text(), "EXPAND")
+        self.assertEqual(self.win._hud_chat_btn.text(), "CHAT")
+        self.assertEqual(self.win._hud_mini_btn.text(), "MINI")
+        self.assertEqual(self.win._hud_close_btn.text(), "CLOSE")
+
+        # Verify mute state toggle maintains clean text
+        self.win._toggle_mute()
+        self.assertEqual(self.win._hud_mute_btn.text(), "MUTED")
+        self.win._toggle_mute()
+        self.assertEqual(self.win._hud_mute_btn.text(), "MIC")
+
+    def test_15_12_hour_format_and_sound_frequency_reaction(self):
+        """Verify 12-hour format time and dynamic sound frequency in listening state."""
+        import time
+        # Verify 12-hour time format with AM/PM
+        t_str = time.strftime("%I:%M:%S %p")
+        self.assertTrue(t_str.endswith("AM") or t_str.endswith("PM"))
+
+        # Verify dynamic sound frequency reaction in LISTENING state
+        hud = self.win.hud
+        hud.state = "LISTENING"
+        hud.set_audio_level(0.85)
+        hud._step()
+        self.assertGreater(hud.level, 0.4)
+        self.assertGreater(sum(hud.wave), 0.0)
+
+    def test_16_multi_display_window_manager(self):
+        """Verify opening, naming, focusing to center, and closing multi-display windows."""
+        from actions.display_window import display_window
+        mock_player = MagicMock()
+        mock_player.open_display.side_effect = lambda ctype, src, title: 1 if "image" in ctype else 2
+        mock_player.focus_display.return_value = True
+
+        # Test show_image in new display with existing local file
+        res1 = display_window({"action": "show_image", "path_or_url": "main.py", "title": "Test Image"}, player=mock_player)
+        self.assertIn("Display 1", res1)
+        mock_player.open_display.assert_called_with("image", "main.py", "Test Image")
+
+        # Test focus display 2
+        res2 = display_window({"action": "focus", "display_id": 2}, player=mock_player)
+        self.assertIn("Display 2", res2)
+        mock_player.focus_display.assert_called_with(2)
+
+        # Test actual MainWindow display open & focus
+        d1 = self.win._on_open_display("image", "", "Diagram")
+        self.assertEqual(d1, 1)
+        self.assertIn(1, self.win._displays)
+        self.assertEqual(self.win._displays[1].display_name, "DISPLAY 1")
+
+        d2 = self.win._on_open_display("video", "", "Trailer")
+        self.assertEqual(d2, 2)
+        self.assertIn(2, self.win._displays)
+        self.assertEqual(self.win._displays[2].display_name, "DISPLAY 2")
+
+        # Test show text in new display
+        d3 = self.win._on_open_display("text", "# Bernoulli Principle\nFluid dynamics overview...", "Physics Notes")
+        self.assertEqual(d3, 3)
+        self.assertIn(3, self.win._displays)
+        self.assertEqual(self.win._displays[3].display_name, "DISPLAY 3")
+        self.assertEqual(self.win._displays[3].content_type, "text")
+        self.assertIn("Bernoulli", self.win._displays[3]._text_edit.toPlainText())
+
+        # Focus display 2
+        screen = QApplication.primaryScreen().availableGeometry()
+        ok = self.win._on_focus_display(2)
+        self.assertTrue(ok)
+        w2 = self.win._displays[2]
+        self.assertEqual(w2.x(), screen.center().x() - w2.width() // 2)
+        self.assertEqual(w2.y(), screen.center().y() - w2.height() // 2)
+
+        # Close display 1
+        self.win._on_close_display_win(1)
+        self.assertNotIn(1, self.win._displays)
+        self.assertIn(2, self.win._displays)
+        self.assertIn(3, self.win._displays)
+
+        # Close all
+        self.win._on_close_display_win(0)
+        self.assertEqual(len(self.win._displays), 0)
+
+    def test_17_hud_conversation_widget_and_streaming(self):
+        """Verify real-time live streaming and conversation history in HudCanvas."""
+        hud = self.win.hud
+        self.assertIsInstance(hud.conversation, HudConversationWidget)
+        self.assertTrue(hud.conversation.isVisible())
+
+        # Test streaming reply in real time while speaking
+        self.win._on_stream_reply("Good afternoon, sir. How")
+        self.assertIn("Good afternoon, sir. How", hud.conversation.toPlainText())
+        self.assertIn("█", hud.conversation.toPlainText())
+
+        self.win._on_stream_reply("Good afternoon, sir. How can I assist you today?")
+        self.assertIn("assist you today?", hud.conversation.toPlainText())
+
+        # Turn completion commits the reply and removes streaming cursor
+        self.win._on_log_line("JARVIS: Good afternoon, sir. How can I assist you today?")
+        self.assertIn("Good afternoon, sir. How can I assist you today?", hud.conversation.toPlainText())
+        self.assertNotIn("█", hud.conversation.toPlainText())
+
+        # Test streaming user input in real time
+        self.win._on_stream_user("What is the current time")
+        self.assertIn("What is the current time", hud.conversation.toPlainText())
+        self.assertIn("...", hud.conversation.toPlainText())
+
+        # Turn completion commits user message
+        self.win._on_log_line("You: What is the current time in Tokyo?")
+        self.assertIn("What is the current time in Tokyo?", hud.conversation.toPlainText())
+
+        # Verify both messages are preserved in history
+        self.assertEqual(len(hud.conversation._messages), 2)
+        self.assertEqual(hud.conversation._messages[0][0], "jarvis")
+        self.assertEqual(hud.conversation._messages[1][0], "you")
+
+    def test_18_conversation_scroll_and_history(self):
+        """Verify conversation fills bottom area and preserves scrollable history."""
+        hud = self.win.hud
+        conv = hud.conversation
+
+        # Add multiple turns of conversation
+        for i in range(15):
+            conv.append_message("you", f"Query number {i}")
+            conv.append_message("jarvis", f"Detailed response to query number {i} with valuable data.")
+
+        # Ensure all 30 messages are stored
+        self.assertEqual(len(conv._messages), 30)
+        text = conv.toPlainText()
+        self.assertIn("Query number 0", text)
+        self.assertIn("Query number 14", text)
+
+        # Check geometry inside HudCanvas
+        hud.resize(420, 540)
+        hud._update_conversation_geometry()
+        self.assertGreater(conv.width(), 300)
+        self.assertGreater(conv.height(), 100)
+        self.assertGreater(conv.y(), 300)
+
+        # In mini mode, conversation should hide
+        hud.set_mini_mode(True)
+        self.assertFalse(conv.isVisible())
+
+        # Returning to normal mode reveals conversation again
+        hud.set_mini_mode(False)
+        self.assertTrue(conv.isVisible())
 
 if __name__ == "__main__":
     unittest.main()
