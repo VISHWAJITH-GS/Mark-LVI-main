@@ -1,0 +1,69 @@
+{
+  "site_url": "http://127.0.0.1:52518/index.html",
+  "framework": "Static HTML/Web Application",
+  "start_time": "2026-11-11T17:15:43.873704",
+  "end_time": "2026-11-11T17:16:03.169077",
+  "total_tests": 3,
+  "passed_tests": 0,
+  "failed_tests": 3,
+  "console_errors": [
+    {
+      "msg_type": "error",
+      "text": "Failed to load resource: the server responded with a status of 404 (File not found)",
+      "location": "{'url': 'http://127.0.0.1:52518/favicon.ico', 'line': 0, 'column': 0, 'lineNumber': 0, 'columnNumber': 0}",
+      "timestamp": 1794397543.9760656
+    }
+  ],
+  "network_errors": [
+    {
+      "url": "http://invalid.domain.that.does.not.exist.test:9999/",
+      "method": "GET",
+      "status": null,
+      "error_text": "net::ERR_NAME_NOT_RESOLVED",
+      "timestamp": 1794397543.807044
+    },
+    {
+      "url": "https://home/",
+      "method": "GET",
+      "status": null,
+      "error_text": "net::ERR_NAME_NOT_RESOLVED",
+      "timestamp": 1794397554.7979956
+    },
+    {
+      "url": "https://home/",
+      "method": "GET",
+      "status": null,
+      "error_text": "net::ERR_NAME_NOT_RESOLVED",
+      "timestamp": 1794397560.3651407
+    }
+  ],
+  "results": [
+    {
+      "test_name": "Verify Page Load and Content",
+      "passed": false,
+      "duration_ms": 5182.270765304565,
+      "steps_executed": 1,
+      "error": "Assertion failed: expected 'MARK LVI Autonomous QA Verification Site' not found on page.",
+      "screenshot_path": "reports\\qa_shot_20261111_171549_1.png",
+      "details": {}
+    },
+    {
+      "test_name": "Verify Primary Action Button",
+      "passed": false,
+      "duration_ms": 8100.327730178833,
+      "steps_executed": 0,
+      "error": "Locator.click: Timeout 8000ms exceeded.\nCall log:\n  - waiting for locator(\"#primary-action-btn\").first\n",
+      "screenshot_path": "reports\\qa_shot_20261111_171549_2.png",
+      "details": {}
+    },
+    {
+      "test_name": "Verify Navigation Links",
+      "passed": false,
+      "duration_ms": 80.3670883178711,
+      "steps_executed": 0,
+      "error": "Could not locate element with given parameters: role=link, name=About, text=None",
+      "screenshot_path": "reports\\qa_shot_20261111_171549_3.png",
+      "details": {}
+    }
+  ]
+}

@@ -50,7 +50,7 @@ except Exception as _e:            # noqa: BLE001 - reported, never fatal
     print(f"[Video] playback unavailable ({_e}) — the HUD will not show video.")
 
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu,
+    QApplication, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMenu,
     QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSplitter,
     QGraphicsScene, QGraphicsView,
     QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QProgressBar, QSlider,
@@ -470,33 +470,15 @@ class HudConversationWidget(QTextEdit):
                 padding: 10px 4px;
                 selection-background-color: rgba(255, 77, 166, 0.35);
             }}
-            QScrollBar:vertical, QScrollBar:horizontal {{
-                width: 0px !important;
-                height: 0px !important;
-                background: transparent !important;
-                border: none !important;
-            }}
-            QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{
-                width: 0px !important;
-                height: 0px !important;
-                background: transparent !important;
-                border: none !important;
-            }}
-            QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page {{
-                width: 0px !important;
-                height: 0px !important;
-                background: transparent !important;
-                border: none !important;
+            QScrollBar:vertical {{
+                width: 0px;
+                height: 0px;
+                background: transparent;
+                border: none;
             }}
         """)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.verticalScrollBar().resize(0, 0)
-        self.verticalScrollBar().setMaximumWidth(0)
-        self.verticalScrollBar().hide()
-        self.horizontalScrollBar().resize(0, 0)
-        self.horizontalScrollBar().setMaximumHeight(0)
-        self.horizontalScrollBar().hide()
         self.viewport().setAutoFillBackground(False)
 
         self._messages: list[tuple[str, str]] = []
@@ -619,7 +601,7 @@ class HudCanvas(QWidget):
     def __init__(self, face_path: str = "", assistant_name: str = "JARVIS", parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setMinimumSize(260, 340)
+        self.setMinimumSize(40, 40)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         self._assistant_name = assistant_name.replace(".", "").strip() or "JARVIS"
@@ -800,20 +782,20 @@ class HudCanvas(QWidget):
                 main_w = self.window()
                 if hasattr(main_w, "_is_minimized_top") and not main_w._is_minimized_top:
                     main_w._normal_geom = main_w.geometry()
-                if hasattr(main_w, "_update_dots_overlay_position"):
-                    main_w._update_dots_overlay_position()
         super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
-            if not getattr(self, "_is_drag", False) and hasattr(self, "_press_pos"):
-                if self._big_mode:
+            if not getattr(self, "_is_drag", False):
+                if getattr(self, "_mini_mode", False):
+                    self.reactor_clicked.emit()
+                elif self._big_mode and hasattr(self, "_press_pos"):
                     cx = self.width() / 2
                     cy = self.height() * 0.43
                     max_r = self.height() * 0.30
                     if math.hypot(self._press_pos.x() - cx, self._press_pos.y() - cy) <= max_r:
                         self.reactor_clicked.emit()
-                else:
+                elif hasattr(self, "_press_pos"):
                     BASE_W, BASE_H = 420.0, 540.0
                     scale = min(self.width() / BASE_W, self.height() / BASE_H)
                     off_x = (self.width() - BASE_W * scale) / 2.0
@@ -867,7 +849,8 @@ class HudCanvas(QWidget):
         if st == "SPEAKING":
             self._level_target = max(amp, 0.35 + 0.65 * abs(math.sin(now * 5.3) * math.sin(now * 2.1 + 1)))
         elif st == "LISTENING":
-            self._level_target = max(amp, self._live_amp)
+            # Live sound frequency indication when user talks to JARVIS
+            self._level_target = max(amp * 1.5, self._live_amp * 1.5)
         elif st in ("THINKING", "PROCESSING"):
             self._level_target = 0.2 + 0.2 * abs(math.sin(now * 3.5))
         else:
@@ -932,6 +915,11 @@ class HudCanvas(QWidget):
             p.end()
             return
 
+        if getattr(self, "_mini_mode", False):
+            self._paint_mini_circle(p, accent, core_mid, glow_col, t)
+            p.end()
+            return
+
         BASE_W = 420.0
         BASE_H = 540.0
         scale = min(w / BASE_W, h / BASE_H)
@@ -977,7 +965,7 @@ class HudCanvas(QWidget):
 
         # Readouts
         p.setFont(keena_font(8, False, 1.5))
-        left = [time.strftime("%H:%M:%S"), time.strftime("%a %d %b").upper()]
+        left = [time.strftime("%I:%M:%S %p"), time.strftime("%a %d %b").upper()]
         right = []
         if self.cpu is not None:
             right += [f"CPU {self.cpu:3.0f}%", f"MEM {self.mem:3.0f}%"]
@@ -986,7 +974,7 @@ class HudCanvas(QWidget):
 
         for i, s in enumerate(left):
             p.setPen(rgba(TEXT_COL if i == 0 else DIM_COL, 220))
-            p.drawText(QRectF(24, 54 + i * 14, 120, 14), Qt.AlignmentFlag.AlignLeft, s)
+            p.drawText(QRectF(24, 54 + i * 14, 140, 14), Qt.AlignmentFlag.AlignLeft, s)
 
         for i, s in enumerate(right):
             hot = s.startswith("CPU") and self.cpu >= 90
@@ -1070,16 +1058,20 @@ class HudCanvas(QWidget):
         # Dynamic Voice ring
         base_r = 62
         if st == "LISTENING":
-            path = QPainterPath()
-            n = len(self.wave)
-            for k in range(n + 1):
-                v = sum(self.wave[(k + d) % n] for d in (-2, -1, 0, 1, 2)) / 5
-                a = math.radians(k * 360 / n + self.spin)
-                r_wave = base_r + 2 + 20 * v
-                pt = QPointF(cx + math.cos(a) * r_wave, cy + math.sin(a) * r_wave)
-                path.moveTo(pt) if k == 0 else path.lineTo(pt)
-            p.setPen(QPen(rgba(accent, 240), 2))
-            p.drawPath(path)
+            # Dynamic sound frequency equalizer bars reacting directly to user speech
+            bars = 48
+            for k in range(bars):
+                a = math.radians(k * 360 / bars + self.spin * 0.3)
+                w_idx = int(k * len(self.wave) / bars) % len(self.wave)
+                w_val = self.wave[w_idx]
+                freq = 0.5 + 0.5 * math.sin(t * 11 + k * 1.2) * math.sin(t * 5.1 + k * 0.7)
+                length = 3 + (26 * lvl + 20 * w_val) * freq
+                alpha = int(140 + 115 * min(1.0, lvl * 2.0))
+                p.setPen(QPen(rgba(accent, alpha), 2.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+                p.drawLine(QPointF(cx + math.cos(a) * base_r, cy + math.sin(a) * base_r),
+                           QPointF(cx + math.cos(a) * (base_r + length), cy + math.sin(a) * (base_r + length)))
+            p.setPen(QPen(rgba(accent, 220), 1.5))
+            p.drawEllipse(center, base_r - 2, base_r - 2)
         elif st == "SPEAKING":
             bars = 48
             for k in range(bars):
@@ -1150,8 +1142,6 @@ class HudCanvas(QWidget):
             y += 18
         p.setOpacity(1.0)
 
-
-
         p.restore()
         p.end()
 
@@ -1190,7 +1180,7 @@ class HudCanvas(QWidget):
 
         p.setPen(rgba(TEXT_COL, 230 * boot))
         p.setFont(keena_font(32, True, 2))
-        p.drawText(QRectF(m + 26, m + 18, 400, 48), Qt.AlignmentFlag.AlignLeft, time.strftime("%H:%M:%S"))
+        p.drawText(QRectF(m + 26, m + 18, 400, 48), Qt.AlignmentFlag.AlignLeft, time.strftime("%I:%M:%S %p"))
         p.setPen(rgba(DIM_COL, 220 * boot))
         p.setFont(keena_font(12, False, 4))
         p.drawText(QRectF(m + 28, m + 68, 400, 22), Qt.AlignmentFlag.AlignLeft, time.strftime("%A %d %B %Y").upper())
@@ -1274,6 +1264,137 @@ class HudCanvas(QWidget):
             shown = self.reply_text[:int(self.reply_shown)]
             cursor = "█" if int(self.reply_shown) < len(self.reply_text) else ""
             p.drawText(QRectF(tx, ty, tw, max(60, int(h - ty - 60))), Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, shown[-220:] + cursor)
+
+    def _paint_mini_circle(self, p: QPainter, accent: QColor, core_mid: QColor, glow_col: QColor, t: float):
+        w, h = self.width(), self.height()
+        cx, cy = w / 2.0, h / 2.0
+
+        # Solid non-transparent deep black background around and inside the circle
+        p.save()
+        disc_r = min(w, h) / 2.0 - 1.0
+        p.setPen(QPen(rgba(accent, 255), 2.0))
+        p.setBrush(QColor(0, 0, 0, 255))
+        p.drawEllipse(QPointF(cx, cy), disc_r, disc_r)
+        p.restore()
+
+        R_target = min(w, h) / 2.0 - 2.0
+        scale = max(0.01, R_target / 125.0)
+
+        p.save()
+        p.translate(cx, cy)
+        p.scale(scale, scale)
+
+        center = QPointF(0, 0)
+        lvl = getattr(self, "level", 0.0)
+
+        # Inner solid black disc to protect animation contrast
+        p.save()
+        p.setPen(QPen(rgba(accent, 220), 2.5))
+        p.setBrush(QColor(0, 0, 0, 255))
+        p.drawEllipse(center, 126, 126)
+        p.restore()
+
+        # Soft radial glow (surges with sound)
+        glow_r = 135 + 75 * lvl
+        g = QRadialGradient(center, max(glow_r, 1))
+        g.setColorAt(0.0, rgba(glow_col, 130 + int(35 * lvl)))
+        g.setColorAt(0.5, rgba(glow_col, 35 + int(25 * lvl)))
+        g.setColorAt(1.0, rgba(glow_col, 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(g)
+        p.drawEllipse(center, glow_r, glow_r)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+
+        # Outer ring
+        R = 125
+        p.setPen(QPen(rgba(accent, 220), 2.5))
+        p.drawEllipse(center, R, R)
+
+        # 4 Notch markers
+        p.setBrush(rgba(accent, 240))
+        for k in range(4):
+            a = math.radians(k * 90 + 45)
+            p.drawPolygon(QPolygonF([
+                QPointF(math.cos(a) * (R - 5), math.sin(a) * (R - 5)),
+                QPointF(math.cos(a + 0.08) * (R + 6), math.sin(a + 0.08) * (R + 6)),
+                QPointF(math.cos(a - 0.08) * (R + 6), math.sin(a - 0.08) * (R + 6)),
+            ]))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+
+        # Dial ticks (pulses inward with sound)
+        p.save()
+        p.rotate(-self.spin * 0.35)
+        for k in range(36):
+            long_tick = (k % 6 == 0)
+            p.setPen(QPen(rgba(accent, 220 if long_tick else 100), 2.5 if long_tick else 1.5))
+            r0 = (96 - 12 * lvl) if long_tick else (104 - 6 * lvl)
+            a = math.radians(k * 10)
+            p.drawLine(QPointF(math.cos(a) * r0, math.sin(a) * r0),
+                       QPointF(math.cos(a) * 114, math.sin(a) * 114))
+        p.restore()
+
+        # Counter-rotating segmented arcs
+        for i, (rad, width, segs, span, direction) in enumerate(((92, 3.5, 3, 70, 1), (80, 2.5, 5, 38, -1))):
+            rect = QRectF(-rad, -rad, 2 * rad, 2 * rad)
+            p.setPen(QPen(rgba(accent, 240 - i * 60), width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+            start = self.spin * (1 + i * 0.6) * direction
+            for s in range(segs):
+                a0 = start + s * 360 / segs
+                p.drawArc(rect, int(-a0 * 16), int(-span * 16))
+
+        # Dynamic Voice ring / speech bars (surges with listening and speaking sound)
+        st = (self.state or "STANDBY").upper()
+        if self.muted:
+            st = "MUTED"
+        base_r = 62
+        if st == "SPEAKING" or self.speaking:
+            bars = 24
+            for k in range(bars):
+                a = math.radians(k * 360 / bars + self.spin * 0.4)
+                wob = 0.5 + 0.5 * math.sin(t * 9 + k * 0.9)
+                length = 5 + 46 * lvl * wob
+                p.setPen(QPen(rgba(accent, 220 + int(35 * lvl)), 2.8 + 1.2 * lvl, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+                p.drawLine(QPointF(math.cos(a) * base_r, math.sin(a) * base_r),
+                           QPointF(math.cos(a) * (base_r + length), math.sin(a) * (base_r + length)))
+        elif st == "LISTENING":
+            path = QPainterPath()
+            n = len(self.wave)
+            for k in range(n + 1):
+                v = sum(self.wave[(k + d) % n] for d in (-2, -1, 0, 1, 2)) / 5
+                a = math.radians(k * 360 / n + self.spin)
+                r_wave = base_r + 2 + (40 * lvl + 22) * v
+                pt = QPointF(math.cos(a) * r_wave, math.sin(a) * r_wave)
+                path.moveTo(pt) if k == 0 else path.lineTo(pt)
+            p.setPen(QPen(rgba(accent, 210 + int(45 * lvl)), 2.2 + 1.2 * lvl))
+            p.drawPath(path)
+        else:
+            p.setPen(QPen(rgba(accent, 140), 1.5))
+            p.drawEllipse(center, base_r, base_r)
+
+        # Arc-reactor coil (10 segments)
+        p.save()
+        p.rotate(self.spin * 0.6)
+        coil = QRectF(-46, -46, 92, 92)
+        p.setPen(QPen(rgba(accent, 150 + int(105 * lvl)), 8.0 + 3.5 * lvl, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+        for k in range(10):
+            p.drawArc(coil, int(k * 36 * 16), int(25 * 16))
+        p.restore()
+        p.setPen(QPen(rgba(accent, 180), 1.8))
+        p.drawEllipse(center, 38, 38)
+
+        # Glowing core (expands with voice sound)
+        core_r = (26 + 26 * lvl + 2.0 * math.sin(t * 3.0))
+        cg = QRadialGradient(center, max(core_r, 1))
+        cg.setColorAt(0.0, QColor(255, 255, 255, 255))
+        cg.setColorAt(0.35, core_mid)
+        cg.setColorAt(0.75, rgba(accent, 235))
+        cg.setColorAt(1.0, rgba(accent, 40))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(cg)
+        p.drawEllipse(center, core_r, core_r)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+
+        p.restore()
 
 
 class MetricBar(QWidget):
@@ -4817,15 +4938,15 @@ class BottomChatDock(QWidget):
         hdr.setContentsMargins(0, 0, 0, 0)
         hdr.setSpacing(6)
 
-        tag = QLabel("◈  JARVIS COMM LOG // LIVE TRANSCRIPT")
+        tag = QLabel("JARVIS COMM LOG // LIVE TRANSCRIPT")
         tag.setFont(keena_font(9, bold=True, spacing=1.2))
         tag.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         hdr.addWidget(tag)
         hdr.addStretch()
 
-        self._min_btn = QPushButton("—")
-        self._min_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-        self._min_btn.setFixedSize(22, 18)
+        self._min_btn = QPushButton("MIN")
+        self._min_btn.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        self._min_btn.setFixedSize(30, 18)
         self._min_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._min_btn.setToolTip("Minimize/Restore log view")
         self._min_btn.setStyleSheet(f"""
@@ -4843,7 +4964,7 @@ class BottomChatDock(QWidget):
         self._min_btn.clicked.connect(self._toggle_collapse)
         hdr.addWidget(self._min_btn)
 
-        close_btn = QPushButton("✕")
+        close_btn = QPushButton("X")
         close_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
         close_btn.setFixedSize(22, 18)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -4853,9 +4974,9 @@ class BottomChatDock(QWidget):
         hdr.addWidget(close_btn)
         lay.addLayout(hdr)
 
-        self._log = self._main_win._log
-        self._log.setFixedHeight(82)
-        self._log.setStyleSheet(f"""
+        self._dock_log = LogWidget()
+        self._dock_log.setFixedHeight(82)
+        self._dock_log.setStyleSheet(f"""
             QTextEdit {{
                 background: rgba(8, 2, 8, 190);
                 color: {C.TEXT};
@@ -4872,13 +4993,14 @@ class BottomChatDock(QWidget):
                 border-radius: 3px;
             }}
         """)
-        lay.addWidget(self._log, stretch=1)
+        self._log = self._dock_log
+        lay.addWidget(self._dock_log, stretch=1)
 
         inp_row = QHBoxLayout()
         inp_row.setContentsMargins(0, 0, 0, 0)
         inp_row.setSpacing(6)
 
-        self._input = self._main_win._input
+        self._input = QLineEdit()
         self._input.setFixedHeight(28)
         self._input.setPlaceholderText("Type a command or query... [Enter to send]")
         self._input.setFont(keena_font(9))
@@ -4895,9 +5017,10 @@ class BottomChatDock(QWidget):
                 background: rgba(35, 10, 32, 230);
             }}
         """)
+        self._input.returnPressed.connect(self._on_dock_send)
         inp_row.addWidget(self._input, stretch=1)
 
-        self._attach_btn = QPushButton("📎 FILE")
+        self._attach_btn = QPushButton("FILE")
         self._attach_btn.setFixedHeight(28)
         self._attach_btn.setFont(keena_font(8, bold=True))
         self._attach_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -4918,9 +5041,9 @@ class BottomChatDock(QWidget):
         self._attach_btn.clicked.connect(self._main_win._browse_file)
         inp_row.addWidget(self._attach_btn)
 
-        self._send_btn = QPushButton("➔")
-        self._send_btn.setFixedSize(32, 28)
-        self._send_btn.setFont(keena_font(10, bold=True))
+        self._send_btn = QPushButton("SEND")
+        self._send_btn.setFixedSize(50, 28)
+        self._send_btn.setFont(keena_font(8, bold=True))
         self._send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._send_btn.setStyleSheet(f"""
             QPushButton {{
@@ -4933,9 +5056,20 @@ class BottomChatDock(QWidget):
                 background: rgba(255, 77, 166, 0.45);
             }}
         """)
-        self._send_btn.clicked.connect(self._main_win._send)
+        self._send_btn.clicked.connect(self._on_dock_send)
         inp_row.addWidget(self._send_btn)
         lay.addLayout(inp_row)
+
+    def _on_dock_send(self):
+        txt = self._input.text().strip()
+        if not txt:
+            return
+        if hasattr(self._main_win, "_input") and hasattr(self._main_win, "_send"):
+            self._main_win._input.setText(txt)
+            self._main_win._send()
+        elif hasattr(self._main_win, "_send_text_command"):
+            self._main_win._send_text_command(txt)
+        self._input.clear()
 
     def _toggle_collapse(self):
         self._collapsed = not self._collapsed
@@ -5015,11 +5149,6 @@ class LeftSearchDock(QWidget):
         hdr.setContentsMargins(0, 0, 0, 0)
         hdr.setSpacing(6)
 
-        dot = QLabel("◈")
-        dot.setFont(keena_font(10, bold=True))
-        dot.setStyleSheet(f"color: {C.PRI}; background: transparent;")
-        hdr.addWidget(dot)
-
         self._title_lbl = QLabel("SEARCH & INTEL MATRIX")
         self._title_lbl.setFont(keena_font(9, bold=True, spacing=1.2))
         self._title_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
@@ -5031,7 +5160,7 @@ class LeftSearchDock(QWidget):
         self._ts_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
         hdr.addWidget(self._ts_lbl)
 
-        dismiss = QPushButton("✕ DISMISS")
+        dismiss = QPushButton("DISMISS")
         dismiss.setFont(keena_font(8, bold=True))
         dismiss.setFixedHeight(22)
         dismiss.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -5093,82 +5222,321 @@ class LeftSearchDock(QWidget):
         super().mouseReleaseEvent(e)
 
 
-class MinimizedDisplaysOverlay(QWidget):
-    dot_clicked = pyqtSignal(int)
+class ArmouryCrateTelemetryWidget(QWidget):
+    """
+    ASUS ROG / TUF Armoury Crate inspired hardware telemetry matrix.
+    Displays CPU, GPU, Fan Cooling, and Memory/Storage with dynamic gauges
+    and interactive Operating Mode profiles (Windows, Silent, Performance, Turbo).
+    """
 
-    def __init__(self, parent_main_win=None):
-        super().__init__(None)
-        self._main_win = parent_main_win
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+    def __init__(self, main_win=None, parent=None):
+        super().__init__(parent)
+        self._main_win = main_win
+        self._mode = "Performance"
+        self.setStyleSheet("background: transparent;")
+        self._build_ui()
 
-        self._vbox = QVBoxLayout(self)
-        self._vbox.setContentsMargins(4, 4, 4, 4)
-        self._vbox.setSpacing(6)
-        self._vbox.setAlignment(Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter)
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(8, 4, 8, 4)
+        root.setSpacing(6)
 
-        self._buttons: dict[int, QPushButton] = {}
+        # ── Section 1: Header (Armoury Crate diagonal hazard slashes)
+        sec1_hdr = QHBoxLayout()
+        sec1_hdr.setContentsMargins(0, 0, 0, 0)
+        sec1_hdr.setSpacing(6)
+        slashes1 = QLabel("\\\\\\")
+        slashes1.setFont(keena_font(9, bold=True))
+        slashes1.setStyleSheet("color: #ff7a00; background: transparent;")
+        sec1_hdr.addWidget(slashes1)
+        t1 = QLabel("System Usage")
+        t1.setFont(keena_font(9, bold=True, spacing=1.2))
+        t1.setStyleSheet("color: #ffffff; background: transparent;")
+        sec1_hdr.addWidget(t1)
+        sec1_hdr.addStretch()
+        root.addLayout(sec1_hdr)
 
-    def update_displays(self, display_items: list[tuple[int, str]]):
-        while self._vbox.count():
-            item = self._vbox.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        self._buttons.clear()
-
-        if not display_items:
-            self.hide()
-            return
-
-        # Stack vertically in display number order above JARVIS:
-        # Display 1 closest to JARVIS at the bottom, Display 2 above it, Display 3 above that!
-        for disp_id, disp_title in sorted(display_items, key=lambda x: x[0], reverse=True):
-            btn = QPushButton(str(disp_id), self)
-            btn.setFixedSize(26, 26)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setToolTip(f"Display {disp_id}: {disp_title}\n(Click to restore)")
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
-                        stop:0 #ffffff, stop:0.35 {C.PRI}, stop:0.75 #b30059, stop:1.0 rgba(14, 4, 12, 235));
-                    color: #ffffff;
-                    border: 1.5px solid {C.PRI};
-                    border-radius: 13px;
-                    font-family: 'Courier New';
-                    font-size: 10px;
-                    font-weight: bold;
-                }}
-                QPushButton:hover {{
-                    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
-                        stop:0 #ffffff, stop:0.4 #ffd700, stop:0.8 #ff8800, stop:1.0 rgba(20, 10, 0, 245));
-                    border: 2px solid #ffd700;
-                    color: #ffffff;
+        def _make_card(title: str):
+            c = QFrame()
+            c.setStyleSheet(f"""
+                QFrame {{
+                    background: rgba(18, 5, 18, 225);
+                    border: 1px solid rgba(255, 77, 166, 0.28);
+                    border-radius: 5px;
                 }}
             """)
-            btn.clicked.connect(lambda _, did=disp_id: self.dot_clicked.emit(did))
-            self._vbox.addWidget(btn)
-            self._buttons[disp_id] = btn
+            cv = QVBoxLayout(c)
+            cv.setContentsMargins(8, 6, 8, 6)
+            cv.setSpacing(3)
+            hdr = QHBoxLayout()
+            hdr.setContentsMargins(0, 0, 0, 0)
+            tl = QLabel(title)
+            tl.setFont(keena_font(9, bold=True))
+            tl.setStyleSheet("color: #ffffff; background: transparent;")
+            hdr.addWidget(tl)
+            hdr.addStretch()
+            sl = QLabel("\\\\\\")
+            sl.setFont(keena_font(7, bold=True))
+            sl.setStyleSheet("color: #ff7a00; background: transparent;")
+            hdr.addWidget(sl)
+            cv.addLayout(hdr)
+            return c, cv
 
-        dot_count = len(display_items)
-        req_h = dot_count * 26 + (dot_count - 1) * 6 + 8
-        self.resize(36, req_h)
-        self.reposition()
-        self.show()
-        self.raise_()
+        def _make_row(name: str):
+            r = QHBoxLayout()
+            r.setContentsMargins(0, 0, 0, 0)
+            nl = QLabel(name)
+            nl.setFont(keena_font(7))
+            nl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+            vl = QLabel("--")
+            vl.setFont(keena_font(8, bold=True))
+            vl.setStyleSheet("color: #ffffff; background: transparent;")
+            r.addWidget(nl)
+            r.addStretch()
+            r.addWidget(vl)
+            return r, vl
 
-    def reposition(self):
-        if not self._main_win or not self.isVisible():
-            return
-        main_geom = self._main_win.geometry()
-        center_x = main_geom.x() + (main_geom.width() - self.width()) // 2
-        top_y = main_geom.y() - self.height() - 6
-        self.move(center_x, top_y)
+        def _make_bar(color="#ff7a00"):
+            pb = QProgressBar()
+            pb.setFixedHeight(4)
+            pb.setTextVisible(False)
+            pb.setRange(0, 100)
+            pb.setValue(0)
+            pb.setStyleSheet(f"""
+                QProgressBar {{
+                    background: rgba(255, 255, 255, 0.08);
+                    border: none;
+                    border-radius: 2px;
+                }}
+                QProgressBar::chunk {{
+                    background: {color};
+                    border-radius: 2px;
+                }}
+            """)
+            return pb
+
+        # ── 2x2 Grid of Cards
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+
+        # 1. CPU Card
+        c_cpu, v_cpu = _make_card("CPU")
+        r_cf, self.lbl_cpu_freq = _make_row("Frequency")
+        r_cu, self.lbl_cpu_usage = _make_row("Usage")
+        self.bar_cpu = _make_bar("#ff7a00")
+        r_cm, self.lbl_cpu_mem_freq = _make_row("Memory Frequency")
+        r_ct, self.lbl_cpu_temp = _make_row("Temperature")
+        r_cv, self.lbl_cpu_volt = _make_row("Voltage")
+        v_cpu.addLayout(r_cf)
+        v_cpu.addLayout(r_cu)
+        v_cpu.addWidget(self.bar_cpu)
+        v_cpu.addLayout(r_cm)
+        v_cpu.addLayout(r_ct)
+        v_cpu.addLayout(r_cv)
+        grid.addWidget(c_cpu, 0, 0)
+
+        # 2. GPU Card
+        c_gpu, v_gpu = _make_card("GPU")
+        r_gf, self.lbl_gpu_freq = _make_row("Frequency")
+        r_gu, self.lbl_gpu_usage = _make_row("Usage")
+        self.bar_gpu = _make_bar("#ff4da6")
+        r_gm, self.lbl_gpu_mem_freq = _make_row("Memory Frequency")
+        r_gt, self.lbl_gpu_temp = _make_row("Temperature")
+        r_gv, self.lbl_gpu_volt = _make_row("Voltage")
+        v_gpu.addLayout(r_gf)
+        v_gpu.addLayout(r_gu)
+        v_gpu.addWidget(self.bar_gpu)
+        v_gpu.addLayout(r_gm)
+        v_gpu.addLayout(r_gt)
+        v_gpu.addLayout(r_gv)
+        grid.addWidget(c_gpu, 0, 1)
+
+        # 3. Fan Card
+        c_fan, v_fan = _make_card("Fan")
+        r_fc, self.lbl_fan_cpu = _make_row("CPU Fan")
+        self.bar_fan_cpu = _make_bar("#ff7a00")
+        r_fg, self.lbl_fan_gpu = _make_row("GPU Fan")
+        self.bar_fan_gpu = _make_bar("#ff7a00")
+        r_fa, self.lbl_fan_acoustics = _make_row("Fan Acoustics")
+        v_fan.addLayout(r_fc)
+        v_fan.addWidget(self.bar_fan_cpu)
+        v_fan.addLayout(r_fg)
+        v_fan.addWidget(self.bar_fan_gpu)
+        v_fan.addLayout(r_fa)
+        grid.addWidget(c_fan, 1, 0)
+
+        # 4. Memory & Storage Card
+        c_mem, v_mem = _make_card("Memory")
+        r_ms, self.lbl_storage = _make_row("Storage")
+        self.bar_storage = _make_bar("#00e5ff")
+        r_mr, self.lbl_ram = _make_row("RAM")
+        self.bar_ram = _make_bar("#ff4da6")
+        r_mn, self.lbl_net = _make_row("Network I/O")
+        v_mem.addLayout(r_ms)
+        v_mem.addWidget(self.bar_storage)
+        v_mem.addLayout(r_mr)
+        v_mem.addWidget(self.bar_ram)
+        v_mem.addLayout(r_mn)
+        grid.addWidget(c_mem, 1, 1)
+
+        root.addLayout(grid)
+
+        # ── Section 2: Operating Mode
+        sec2_hdr = QHBoxLayout()
+        sec2_hdr.setContentsMargins(0, 4, 0, 0)
+        sec2_hdr.setSpacing(6)
+        slashes2 = QLabel("\\\\\\")
+        slashes2.setFont(keena_font(9, bold=True))
+        slashes2.setStyleSheet("color: #ff7a00; background: transparent;")
+        sec2_hdr.addWidget(slashes2)
+        t2 = QLabel("Operating Mode")
+        t2.setFont(keena_font(9, bold=True, spacing=1.2))
+        t2.setStyleSheet("color: #ffffff; background: transparent;")
+        sec2_hdr.addWidget(t2)
+        sec2_hdr.addStretch()
+        root.addLayout(sec2_hdr)
+
+        modes_row = QHBoxLayout()
+        modes_row.setSpacing(6)
+        self._mode_btns = {}
+        for m_name in ["Windows®", "Silent", "Performance", "Turbo"]:
+            b = QPushButton(m_name)
+            b.setFont(keena_font(8, bold=True))
+            b.setFixedHeight(30)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda checked=False, name=m_name: self.set_operating_mode(name))
+            self._mode_btns[m_name] = b
+            modes_row.addWidget(b)
+        root.addLayout(modes_row)
+
+        self.set_operating_mode("Performance")
+
+    def set_operating_mode(self, mode: str):
+        self._mode = mode
+        for name, b in self._mode_btns.items():
+            if name == mode:
+                b.setStyleSheet("""
+                    QPushButton {
+                        background: rgba(255, 122, 0, 0.22);
+                        color: #ffffff;
+                        border: 1px solid #ff7a00;
+                        border-radius: 4px;
+                        padding: 4px 8px;
+                    }
+                """)
+            else:
+                b.setStyleSheet("""
+                    QPushButton {
+                        background: rgba(22, 6, 22, 0.65);
+                        color: #d6a0be;
+                        border: 1px solid rgba(255, 77, 166, 0.22);
+                        border-radius: 4px;
+                        padding: 4px 8px;
+                    }
+                    QPushButton:hover {
+                        border-color: #ff7a00;
+                        color: #ffffff;
+                        background: rgba(255, 122, 0, 0.12);
+                    }
+                """)
+
+    def update_metrics(self, snap: dict):
+        cpu = snap.get("cpu", 0.0)
+        gpu = snap.get("gpu", -1.0)
+        tmp = snap.get("tmp", -1.0)
+        net = snap.get("net", 0.0)
+
+        # Real CPU Frequency
+        try:
+            cf = psutil.cpu_freq()
+            cf_val = int(cf.current) if cf and cf.current else 2827
+        except Exception:
+            cf_val = 2827
+        self.lbl_cpu_freq.setText(f"{cf_val} MHz")
+
+        # CPU Usage
+        self.lbl_cpu_usage.setText(f"{cpu:.0f} %")
+        self.bar_cpu.setValue(int(max(0, min(100, cpu))))
+        self.lbl_cpu_mem_freq.setText("4800 MT/s")
+
+        # CPU Temp & Voltage
+        c_temp = int(tmp if tmp > 0 else (46 + (cpu / 100.0) * 36))
+        self.lbl_cpu_temp.setText(f"{c_temp} °C")
+        self.lbl_cpu_volt.setText(f"{1.05 + (cpu / 100.0) * 0.31:.2f} V")
+
+        # GPU
+        if gpu >= 0:
+            g_freq = int(210 + (gpu / 100.0) * 1650)
+            self.lbl_gpu_freq.setText(f"{g_freq} MHz")
+            self.lbl_gpu_usage.setText(f"{gpu:.0f} %")
+            self.bar_gpu.setValue(int(max(0, min(100, gpu))))
+            g_temp = int(tmp if tmp > 0 else (42 + (gpu / 100.0) * 32))
+            self.lbl_gpu_temp.setText(f"{g_temp} °C")
+            self.lbl_gpu_mem_freq.setText(f"{int(405 + (gpu / 100.0) * 1200)} MHz")
+            self.lbl_gpu_volt.setText(f"{0.72 + (gpu / 100.0) * 0.38:.2f} V")
+        else:
+            self.lbl_gpu_freq.setText("210 MHz")
+            self.lbl_gpu_usage.setText("0 %")
+            self.bar_gpu.setValue(0)
+            self.lbl_gpu_mem_freq.setText("405 MHz")
+            self.lbl_gpu_temp.setText("42 °C")
+            self.lbl_gpu_volt.setText("0.65 V")
+
+        # Fan & Acoustics based on Mode
+        if self._mode == "Silent":
+            base_rpm = 1900
+            acoustic = 22.0 + (cpu / 100.0) * 3.5
+        elif self._mode == "Turbo":
+            base_rpm = 3600
+            acoustic = 34.0 + (cpu / 100.0) * 7.5
+        elif self._mode == "Windows®":
+            base_rpm = 2200
+            acoustic = 23.5 + (cpu / 100.0) * 4.5
+        else:  # Performance
+            base_rpm = 2800
+            acoustic = 25.5 + (cpu / 100.0) * 5.5
+
+        cpu_fan = int(base_rpm + (cpu / 100.0) * 900)
+        gpu_fan = int(max(1500, cpu_fan - 80))
+        self.lbl_fan_cpu.setText(f"{cpu_fan} RPM")
+        self.bar_fan_cpu.setValue(int(min(100, (cpu_fan / 5200.0) * 100)))
+        self.lbl_fan_gpu.setText(f"{gpu_fan} RPM")
+        self.bar_fan_gpu.setValue(int(min(100, (gpu_fan / 5200.0) * 100)))
+        self.lbl_fan_acoustics.setText(f"{acoustic:.1f} dBA")
+
+        # Storage & RAM
+        try:
+            drive = "C:\\" if os.name == "nt" else "/"
+            du = psutil.disk_usage(drive)
+            s_used = du.used / (1024**3)
+            s_total = du.total / (1024**3)
+            s_pct = du.percent
+        except Exception:
+            s_used, s_total, s_pct = 105.7, 446.4, 23.7
+        self.lbl_storage.setText(f"{s_used:.1f} / {s_total:.1f} GB")
+        self.bar_storage.setValue(int(s_pct))
+
+        try:
+            vm = psutil.virtual_memory()
+            r_used = vm.used / (1024**3)
+            r_total = vm.total / (1024**3)
+            r_pct = vm.percent
+        except Exception:
+            r_used, r_total, r_pct = 9.0, 15.8, 57.0
+        self.lbl_ram.setText(f"{r_used:.1f} / {r_total:.1f} GB")
+        self.bar_ram.setValue(int(r_pct))
+
+        # Network
+        if net < 1.0:
+            net_str = f"{net * 1024:.0f} KB/s"
+        else:
+            net_str = f"{net:.1f} MB/s"
+        self.lbl_net.setText(net_str)
 
 
 class JarvisDisplayWindow(QWidget):
     closed = pyqtSignal(int)
-    minimized_requested = pyqtSignal(int)
     _img_data_sig = pyqtSignal(bytes)
 
     def __init__(self, display_id: int, name: str, content_type: str, source: str, title: str = "", parent=None):
@@ -5229,7 +5597,7 @@ class JarvisDisplayWindow(QWidget):
                 color: #ffffff;
             }}
         """)
-        self._min_btn.clicked.connect(self._on_min_btn_clicked)
+        self._min_btn.clicked.connect(self.showMinimized)
         hdr.addWidget(self._min_btn)
 
         close_btn = QPushButton("X")
@@ -5266,17 +5634,6 @@ class JarvisDisplayWindow(QWidget):
             self._setup_image(cont_lay)
 
         v.addWidget(self._content_cont, stretch=1)
-
-    def _on_min_btn_clicked(self):
-        self.hide()
-        self.minimized_requested.emit(self.display_id)
-
-    def changeEvent(self, e):
-        super().changeEvent(e)
-        if e.type() == QEvent.Type.WindowStateChange and self.isMinimized():
-            self.setWindowState(Qt.WindowState.WindowNoState)
-            self.hide()
-            self.minimized_requested.emit(self.display_id)
 
     def _setup_text(self, lay: QVBoxLayout):
         self._text_edit = QTextEdit()
@@ -5345,9 +5702,21 @@ class JarvisDisplayWindow(QWidget):
                 self._update_scaled_image()
                 return
 
-        # Remote source: download on worker thread
-        t = threading.Thread(target=self._fetch_image_thread, daemon=True)
+        # URL or remote source: download in background thread
+        t = threading.Thread(target=self._download_image_worker, daemon=True)
         t.start()
+
+    def _download_image_worker(self):
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+        }
+        url = self.source
+        # Fix Wikipedia thumb URL if present
+        if "upload.wikimedia.org" in url and "/thumb/" in url:
+            m = re.match(r"(https?://upload\.wikimedia\.org/wikipedia/[^/]+)/thumb/([^/]+/[^/]+/[^/]+)/.*", url)
+            if m:
+                url = f"{m.group(1)}/{m.group(2)}"
 
     def _download_image_bytes(self, url: str, headers: dict, timeout: int = 5) -> bytes | None:
         try:
@@ -5382,6 +5751,7 @@ class JarvisDisplayWindow(QWidget):
             "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
         }
         url = self.source
+        # Fix Wikipedia thumb URL if present
         if "upload.wikimedia.org" in url and "/thumb/" in url:
             m = re.match(r"(https?://upload\.wikimedia\.org/wikipedia/[^/]+)/thumb/([^/]+/[^/]+/[^/]+)/.*", url)
             if m:
@@ -5391,6 +5761,7 @@ class JarvisDisplayWindow(QWidget):
         if url.startswith(("http://", "https://")):
             data = self._download_image_bytes(url, headers, timeout=6)
 
+        # If data fetch failed, search DDG for image
         if not data:
             query = self.title_text or Path(self.source.split("?")[0]).stem.replace("_", " ")
             if query and not query.lower().startswith("display"):
@@ -5421,35 +5792,34 @@ class JarvisDisplayWindow(QWidget):
             self._vid_player = QMediaPlayer(self)
             self._vid_audio = QAudioOutput(self)
             self._vid_player.setAudioOutput(self._vid_audio)
+            self._vid_audio.setMuted(True)
 
             self._scene = QGraphicsScene(self)
-            self._vid_item = QGraphicsVideoItem()
-            self._scene.addItem(self._vid_item)
-
-            self._view = QGraphicsView(self._scene)
-            self._view.setStyleSheet("background: #000; border: none;")
-            self._view.setFrameShape(QGraphicsView.Shape.NoFrame)
+            self._view = QGraphicsView(self._scene, self)
+            self._view.setStyleSheet("background: #000000; border: none;")
             self._view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self._view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            lay.addWidget(self._view, stretch=1)
-
+            self._vid_item = QGraphicsVideoItem()
+            self._scene.addItem(self._vid_item)
             self._vid_player.setVideoOutput(self._vid_item)
+
+            lay.addWidget(self._view, stretch=1)
 
             c_bar = QHBoxLayout()
             c_bar.setContentsMargins(4, 2, 4, 2)
-            c_bar.setSpacing(8)
+            c_bar.setSpacing(6)
 
             self._play_btn = QPushButton("PAUSE")
-            self._play_btn.setFont(keena_font(8, bold=True))
-            self._play_btn.setFixedSize(50, 22)
-            self._play_btn.setStyleSheet(f"background: {C.PANEL2}; color: {C.TEXT}; border: 1px solid {C.BORDER}; border-radius: 3px;")
+            self._play_btn.setFont(keena_font(7, bold=True))
+            self._play_btn.setFixedSize(48, 20)
+            self._play_btn.setStyleSheet(f"background: rgba(30, 8, 26, 210); color: #fff; border: 1px solid {C.PRI}; border-radius: 3px;")
             self._play_btn.clicked.connect(self._toggle_playback)
             c_bar.addWidget(self._play_btn)
 
             self._mute_btn = QPushButton("SOUND OFF")
-            self._mute_btn.setFont(keena_font(8, bold=True))
-            self._mute_btn.setFixedSize(70, 22)
-            self._mute_btn.setStyleSheet(f"background: {C.PANEL2}; color: {C.TEXT}; border: 1px solid {C.BORDER}; border-radius: 3px;")
+            self._mute_btn.setFont(keena_font(7, bold=True))
+            self._mute_btn.setFixedSize(68, 20)
+            self._mute_btn.setStyleSheet(f"background: rgba(30, 8, 26, 210); color: #fff; border: 1px solid {C.PRI}; border-radius: 3px;")
             self._mute_btn.clicked.connect(self._toggle_sound)
             c_bar.addWidget(self._mute_btn)
             c_bar.addStretch()
@@ -5516,38 +5886,7 @@ class JarvisDisplayWindow(QWidget):
         super().closeEvent(e)
 
 
-class ArmouryCrateTelemetry(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._mode = "Performance"
-        self.lbl_cpu_usage = QLabel("CPU: 0%")
-        self.lbl_gpu_usage = QLabel("GPU: 0%")
-        self.lbl_cpu_temp = QLabel("TEMP: 0°C")
-        self.bar_cpu = QProgressBar()
-        self.bar_gpu = QProgressBar()
-        self.bar_cpu.setRange(0, 100)
-        self.bar_gpu.setRange(0, 100)
-
-    def set_operating_mode(self, mode: str):
-        self._mode = str(mode)
-
-    def update_metrics(self, data: dict):
-        cpu = data.get("cpu", 0.0)
-        gpu = data.get("gpu", 0.0)
-        tmp = data.get("tmp", 0.0)
-        self.lbl_cpu_usage.setText(f"CPU: {int(cpu)}%")
-        self.lbl_gpu_usage.setText(f"GPU: {int(gpu)}%")
-        self.lbl_cpu_temp.setText(f"TEMP: {int(tmp)}°C")
-        self.bar_cpu.setValue(int(cpu))
-        self.bar_gpu.setValue(int(gpu))
-
-
 class MainWindow(QMainWindow):
-    _open_display_sig = pyqtSignal(str, str, str)
-    _focus_display_sig = pyqtSignal(int)
-    _close_display_sig = pyqtSignal(int)
-    _stream_user_sig = pyqtSignal(str)
-    _stream_reply_sig = pyqtSignal(str)
     _log_sig        = pyqtSignal(str)
     _state_sig      = pyqtSignal(str)
     _content_sig    = pyqtSignal(str, str)   # (title, text) — thread-safe content display
@@ -5568,6 +5907,11 @@ class MainWindow(QMainWindow):
     _quiz_sig       = pyqtSignal(str, object, object)  # (topic, questions, grader)
     _quiz_hide_sig  = pyqtSignal()
     _review_sig     = pyqtSignal(str, str, object, object)  # document review payload
+    _open_display_sig = pyqtSignal(str, str, str)   # (content_type, source, encoded_title)
+    _focus_display_sig = pyqtSignal(int)            # (display_id)
+    _close_display_sig = pyqtSignal(int)            # (display_id)
+    _stream_user_sig = pyqtSignal(str)              # (streamed user transcript)
+    _stream_reply_sig = pyqtSignal(str)             # (streamed assistant transcript)
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -5754,6 +6098,7 @@ class MainWindow(QMainWindow):
 
         # ── Compact HUD container (only the compact HUD!)
         self.hud_box = QWidget()
+        self.hud_box.setFixedWidth(420)
         self.hud_box.setStyleSheet("background: transparent;")
         hud_v = QVBoxLayout(self.hud_box)
         hud_v.setContentsMargins(0, 0, 0, 0)
@@ -5762,33 +6107,19 @@ class MainWindow(QMainWindow):
         self.hud_ctrl_bar = self._build_hud_controls_bar()
         hud_v.addWidget(self.hud_ctrl_bar, stretch=0)
 
-        # ── Expanded Cyber Drawer (kept invisible / backward compatibility)
+        # ── Expanded Cyber Drawer (attached directly to JARVIS window)
+        self._drawer = self._build_cyber_drawer()
+        self._drawer.setVisible(False)
+
         central = QWidget()
         central.setStyleSheet("background: transparent;")
         self.setCentralWidget(central)
 
-        self._main_h = QVBoxLayout(central)
+        self._main_h = QHBoxLayout(central)
         self._main_h.setContentsMargins(0, 0, 0, 0)
-        self._main_h.setSpacing(0)
-        self._main_h.addWidget(self.hud_box)
-
-        # ── Expanded Cyber Drawer
-        self._drawer = self._build_cyber_drawer(central)
-        self._drawer.setVisible(False)
-        self._main_h.addWidget(self._drawer)
-
-        self._armoury_telemetry = ArmouryCrateTelemetry(self)
-        self._displays: dict[int, JarvisDisplayWindow] = {}
-        self._display_counter: int = 0
-        self._minimized_display_ids: set[int] = set()
-        self._dots_overlay = MinimizedDisplaysOverlay(self)
-        self._dots_overlay.dot_clicked.connect(self._on_restore_display)
-
-        self._open_display_sig.connect(self._on_open_display)
-        self._focus_display_sig.connect(self._on_focus_display)
-        self._close_display_sig.connect(self._on_close_display_win)
-        self._stream_user_sig.connect(self._on_stream_user)
-        self._stream_reply_sig.connect(self._on_stream_reply)
+        self._main_h.setSpacing(8)
+        self._main_h.addWidget(self._drawer, stretch=1)
+        self._main_h.addWidget(self.hud_box, stretch=0)
 
         # Edge-docked components:
         # 1. Chat log at bottom center of screen (long width, short height)
@@ -5800,6 +6131,7 @@ class MainWindow(QMainWindow):
         # Arc Reactor minimize tracking
         self._is_minimized_top = False
         self._normal_geom = self.geometry()
+        self._active_corner = "BR"
 
         # Dummy compatibility references
         self._center_split = QSplitter(Qt.Orientation.Vertical)
@@ -5841,6 +6173,13 @@ class MainWindow(QMainWindow):
         self._quiz_sig.connect(self._show_quiz)
         self._quiz_hide_sig.connect(self._hide_quiz)
         self._review_sig.connect(self._show_review)
+        self._stream_user_sig.connect(self._on_stream_user)
+        self._stream_reply_sig.connect(self._on_stream_reply)
+        self._displays: dict[int, JarvisDisplayWindow] = {}
+        self._display_counter: int = 0
+        self._open_display_sig.connect(self._on_open_display)
+        self._focus_display_sig.connect(self._on_focus_display)
+        self._close_display_sig.connect(self._on_close_display_win)
         self._cam_stop = threading.Event()
 
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
@@ -5865,19 +6204,10 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
+        # Chat box is popped up ONLY if selected by the user. Do not auto-show on start.
 
     def closeEvent(self, event):
         self._is_closed = True
-        if hasattr(self, "_dots_overlay"):
-            self._dots_overlay.close()
-        if hasattr(self, "_displays"):
-            for win in list(self._displays.values()):
-                try:
-                    win.close()
-                except Exception:
-                    pass
-            self._displays.clear()
-            self._minimized_display_ids.clear()
         if hasattr(self, "bottom_chat_dock"):
             self.bottom_chat_dock.close()
         if hasattr(self, "left_search_dock"):
@@ -5885,30 +6215,48 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def toggle_minimize_top(self):
+        """
+        Minimizes ONLY the circular Arc Reactor element to the left-bottom of the screen
+        into a small favicon-sized floating orb, or restores it back to normal position.
+        Triggered by clicking the Arc Reactor or the ◀ MINI button.
+        """
         screen = QApplication.primaryScreen().availableGeometry()
+        MINI_SIZE = 58  # Favicon-sized circular orb
+
         if getattr(self, "_is_minimized_top", False):
+            # Restore to normal position at bottom-right
+            self.hud._mini_mode = False
+            self.setMinimumSize(280, 380)
+            if hasattr(self, "hud_box"):
+                self.hud_box.setFixedWidth(420)
+            if hasattr(self, "hud_ctrl_bar"):
+                self.hud_ctrl_bar.setVisible(True)
             target = getattr(self, "_normal_geom", None)
             if not target:
                 init_x = max(screen.left() + 20, screen.right() - 420 - 24)
                 init_y = max(screen.top() + 20, screen.bottom() - 580 - 24)
                 target = QRect(init_x, init_y, 420, 580)
             self._is_minimized_top = False
-            self.hud.set_mini_mode(False)
             if hasattr(self, "_hud_mini_btn"):
                 self._hud_mini_btn.setText("MINI")
-                self._hud_mini_btn.setToolTip("Minimize to bottom-left")
+                self._hud_mini_btn.setToolTip("Minimize Arc Reactor circle to bottom-left (Favicon size)")
         else:
+            if getattr(self, "_expanded", False):
+                self._toggle_expanded(False)
             self._normal_geom = self.geometry()
-            target_w = 58
-            target_h = 58
+            self.hud._mini_mode = True
+            if hasattr(self, "hud_ctrl_bar"):
+                self.hud_ctrl_bar.setVisible(False)
+            if hasattr(self, "hud_box"):
+                self.hud_box.setFixedWidth(MINI_SIZE)
+            self.setMinimumSize(MINI_SIZE, MINI_SIZE)
             target_x = screen.left() + 24
-            target_y = screen.bottom() - 58 - 24
-            target = QRect(target_x, target_y, target_w, target_h)
+            target_y = screen.bottom() - MINI_SIZE - 24
+            target = QRect(target_x, target_y, MINI_SIZE, MINI_SIZE)
             self._is_minimized_top = True
-            self.hud.set_mini_mode(True)
             if hasattr(self, "_hud_mini_btn"):
-                self._hud_mini_btn.setText("RESTORE")
-                self._hud_mini_btn.setToolTip("Restore Arc Reactor")
+                self._hud_mini_btn.setText("NORM")
+                self._hud_mini_btn.setToolTip("Restore Arc Reactor to normal position")
 
         self._geom_anim = QPropertyAnimation(self, b"geometry")
         self._geom_anim.setDuration(300)
@@ -5918,130 +6266,64 @@ class MainWindow(QMainWindow):
         self._geom_anim.start()
 
     def snap_to_corner(self, corner: str):
-        self._active_corner = corner.upper()
+        """
+        Smoothly moves JARVIS to one of the 4 screen corners:
+        'TL' (Top-Left), 'TR' (Top-Right), 'BL' (Bottom-Left), 'BR' (Bottom-Right).
+        """
         screen = QApplication.primaryScreen().availableGeometry()
-        w, h = self.width(), self.height()
-        margin = 24
-        if self._active_corner == "TL":
-            target = QPoint(screen.left() + margin, screen.top() + margin)
-        elif self._active_corner == "TR":
-            target = QPoint(screen.right() - w - margin, screen.top() + margin)
-        elif self._active_corner == "BL":
-            target = QPoint(screen.left() + margin, screen.bottom() - h - margin)
-        else:
-            target = QPoint(screen.right() - w - margin, screen.bottom() - h - margin)
+        pad = 24
+        w = self.width()
+        h = self.height()
+        corner = corner.upper().strip()
+
+        if corner == "TL":
+            target_x = screen.left() + pad
+            target_y = screen.top() + pad
+        elif corner == "TR":
+            target_x = screen.right() - w - pad
+            target_y = screen.top() + pad
+        elif corner == "BL":
+            target_x = screen.left() + pad
+            target_y = screen.bottom() - h - pad
+        else:  # 'BR' default
+            target_x = screen.right() - w - pad
+            target_y = screen.bottom() - h - pad
+
+        self._active_corner = corner
+        target_pos = QPoint(target_x, target_y)
 
         self._pos_anim = QPropertyAnimation(self, b"pos")
-        self._pos_anim.setDuration(250)
+        self._pos_anim.setDuration(280)
+        self._pos_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._pos_anim.setStartValue(self.pos())
-        self._pos_anim.setEndValue(target)
+        self._pos_anim.setEndValue(target_pos)
         self._pos_anim.start()
 
     def cycle_corners(self):
+        """Cycles smoothly through the 4 corners: BR -> BL -> TL -> TR -> BR."""
         order = ["BR", "BL", "TL", "TR"]
         curr = getattr(self, "_active_corner", "BR")
-        idx = (order.index(curr) + 1) % len(order) if curr in order else 0
-        self.snap_to_corner(order[idx])
+        try:
+            next_idx = (order.index(curr) + 1) % len(order)
+        except ValueError:
+            next_idx = 0
+        self.snap_to_corner(order[next_idx])
+
+    def maximize_display(self):
+        """Maximizes JARVIS to fullscreen mode or restores it."""
+        self._toggle_fullscreen()
 
     def expand_display(self):
+        """Expands the attached Cyber Drawer."""
         self._toggle_expanded(True)
 
     def collapse_display(self):
+        """Collapses the Cyber Drawer into the compact HUD."""
         self._toggle_expanded(False)
 
-    def _on_open_display(self, content_type: str, source: str, title: str) -> int:
-        self._display_counter += 1
-        d_id = self._display_counter
-        name = f"DISPLAY {d_id}"
-        win = JarvisDisplayWindow(d_id, name, content_type, source, title)
-        self._displays[d_id] = win
-        win.closed.connect(self._on_display_closed)
-        win.minimized_requested.connect(self._on_display_minimized)
-
-        screen = QApplication.primaryScreen().availableGeometry()
-        off = (d_id - 1) * 30
-        win.move(max(screen.left() + 40, screen.center().x() - win.width() // 2 + off),
-                 max(screen.top() + 40, screen.center().y() - win.height() // 2 + off))
-        win.show()
-        win.raise_()
-        win.activateWindow()
-        return d_id
-
-    def _on_display_minimized(self, d_id: int):
-        self._minimized_display_ids.add(d_id)
-        self._update_dots_overlay()
-
-    def _on_restore_display(self, d_id: int):
-        self._minimized_display_ids.discard(d_id)
-        win = self._displays.get(d_id)
-        if win:
-            win.setWindowState(Qt.WindowState.WindowNoState)
-            win.show()
-            win.raise_()
-            win.activateWindow()
-        self._update_dots_overlay()
-
-    def _on_focus_display(self, d_id: int) -> bool:
-        self._minimized_display_ids.discard(d_id)
-        win = self._displays.get(d_id)
-        if win:
-            win.setWindowState(Qt.WindowState.WindowNoState)
-            win.show()
-            win.raise_()
-            win.activateWindow()
-            screen = QApplication.primaryScreen().availableGeometry()
-            cx = screen.center().x() - win.width() // 2
-            cy = screen.center().y() - win.height() // 2
-            win.move(cx, cy)
-            self._update_dots_overlay()
-            return True
-        return False
-
-    def _on_display_closed(self, d_id: int):
-        self._minimized_display_ids.discard(d_id)
-        self._displays.pop(d_id, None)
-        self._update_dots_overlay()
-
-    def _on_close_display_win(self, d_id: int):
-        if d_id <= 0:
-            for win in list(self._displays.values()):
-                try:
-                    win.close()
-                except Exception:
-                    pass
-            self._displays.clear()
-            self._minimized_display_ids.clear()
-        else:
-            win = self._displays.pop(d_id, None)
-            self._minimized_display_ids.discard(d_id)
-            if win:
-                try:
-                    win.close()
-                except Exception:
-                    pass
-        self._update_dots_overlay()
-
-    def _update_dots_overlay(self):
-        items = []
-        for did in sorted(list(self._minimized_display_ids)):
-            win = self._displays.get(did)
-            title = win.title_text if win else f"Display {did}"
-            items.append((did, title))
-        self._dots_overlay.update_displays(items)
-
-    def _update_dots_overlay_position(self):
-        if hasattr(self, "_dots_overlay") and self._dots_overlay.isVisible():
-            self._dots_overlay.reposition()
-
-    def _on_stream_user(self, text: str):
-        self.hud.stream_user_text(text)
-
-    def _on_stream_reply(self, text: str):
-        self.hud.stream_reply_text(text)
-
-    def moveEvent(self, e):
-        super().moveEvent(e)
-        self._update_dots_overlay_position()
+    def close_display(self):
+        """Closes the JARVIS display cleanly."""
+        self.close()
 
     def toggle_chat_dock(self):
         """Toggle bottom chat dock visibility."""
@@ -6051,6 +6333,72 @@ class MainWindow(QMainWindow):
             else:
                 self.bottom_chat_dock.show()
                 self.bottom_chat_dock.raise_()
+
+    def _on_open_display(self, content_type: str, source: str, encoded_title: str):
+        if ":" in encoded_title:
+            id_str, title = encoded_title.split(":", 1)
+            try:
+                disp_id = int(id_str)
+            except ValueError:
+                self._display_counter += 1
+                disp_id = self._display_counter
+        else:
+            self._display_counter += 1
+            disp_id = self._display_counter
+            title = encoded_title
+
+        name = f"DISPLAY {disp_id}"
+        win = JarvisDisplayWindow(disp_id, name, content_type, source, title)
+        self._displays[disp_id] = win
+        win.closed.connect(lambda d_id: self._displays.pop(d_id, None))
+
+        screen = QApplication.primaryScreen().availableGeometry()
+        offset = ((disp_id - 1) % 6) * 36
+        x = max(screen.left() + 20, min(screen.right() - win.width() - 20, screen.center().x() - win.width() // 2 + offset))
+        y = max(screen.top() + 20, min(screen.bottom() - win.height() - 20, screen.center().y() - win.height() // 2 + offset))
+        win.move(x, y)
+        win.show()
+        win.raise_()
+        win.activateWindow()
+        self._on_log_line(f"SYS: Opened {name} ({content_type.upper()})")
+        return disp_id
+
+    def _on_focus_display(self, display_id: int):
+        if display_id in self._displays:
+            win = self._displays[display_id]
+            screen = QApplication.primaryScreen().availableGeometry()
+            cx = max(screen.left() + 20, screen.center().x() - win.width() // 2)
+            cy = max(screen.top() + 20, screen.center().y() - win.height() // 2)
+            win.move(cx, cy)
+            if win.isMinimized():
+                win.showNormal()
+            else:
+                win.show()
+            win.raise_()
+            win.activateWindow()
+            self._on_log_line(f"SYS: Focused DISPLAY {display_id} in center of screen")
+            return True
+        self._on_log_line(f"SYS: DISPLAY {display_id} not found")
+        return False
+
+    def _on_close_display_win(self, display_id: int):
+        if display_id == 0:
+            for w in list(self._displays.values()):
+                try:
+                    w.close()
+                except Exception:
+                    pass
+            self._displays.clear()
+            self._on_log_line("SYS: Closed all display windows")
+            return True
+        elif display_id in self._displays:
+            try:
+                self._displays[display_id].close()
+            except Exception:
+                pass
+            self._on_log_line(f"SYS: Closed DISPLAY {display_id}")
+            return True
+        return False
 
     def _show_camera_frame(self, img_bytes: bytes):
         """Slot — display camera preview overlay (main thread)."""
@@ -6146,7 +6494,7 @@ class MainWindow(QMainWindow):
                     color: {C.TEXT};
                     border: 1px solid {C.BORDER_B};
                     border-radius: 4px;
-                    padding: 3px 5px;
+                    padding: 3px 8px;
                 }}
                 QPushButton:hover {{
                     background: rgba(255, 77, 166, 0.25);
@@ -6159,24 +6507,38 @@ class MainWindow(QMainWindow):
             """)
             return b
 
-        self._hud_mute_btn = _btn("MIC", "Mute/Unmute microphone")
+        self._hud_mute_btn = _btn("MIC", "Mute/Unmute microphone (F4)")
         self._hud_mute_btn.clicked.connect(self._toggle_mute)
         lay.addWidget(self._hud_mute_btn)
 
-        self._hud_exp_btn = _btn("EXPAND", "Expand cyber drawer")
-        self._hud_exp_btn.clicked.connect(lambda: self._toggle_expanded(not self._expanded))
+        self._hud_exp_btn = _btn("EXPAND", "Expand attached JARVIS Intelligence Matrix")
+        self._hud_exp_btn.clicked.connect(lambda: self._toggle_expanded())
         lay.addWidget(self._hud_exp_btn)
 
-        self._hud_chat_btn = _btn("CHAT", "Toggle Bottom Chat Dock")
+        self._hud_chat_btn = _btn("CHAT", "Toggle Bottom Chat Log Dock")
         self._hud_chat_btn.clicked.connect(self.toggle_chat_dock)
         lay.addWidget(self._hud_chat_btn)
 
-        self._hud_mini_btn = _btn("MINI", "Minimize to bottom-left")
+        self._hud_mini_btn = _btn("MINI", "Minimize Arc Reactor to bottom-left (Favicon size)")
         self._hud_mini_btn.clicked.connect(self.toggle_minimize_top)
         lay.addWidget(self._hud_mini_btn)
 
-        self._hud_close_btn = _btn("CLOSE", "Close JARVIS HUD")
-        self._hud_close_btn.clicked.connect(self.close)
+        self._hud_close_btn = _btn("CLOSE", "Close JARVIS Display")
+        self._hud_close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(35, 8, 20, 190);
+                color: #ff6688;
+                border: 1px solid rgba(255, 102, 136, 0.35);
+                border-radius: 4px;
+                padding: 3px 8px;
+            }}
+            QPushButton:hover {{
+                background: rgba(255, 51, 102, 0.45);
+                color: #ffffff;
+                border-color: #ff3366;
+            }}
+        """)
+        self._hud_close_btn.clicked.connect(self.close_display)
         lay.addWidget(self._hud_close_btn)
 
         return bar
@@ -6207,8 +6569,8 @@ class MainWindow(QMainWindow):
             }}
         """
 
-    def _build_cyber_drawer(self, parent=None) -> QWidget:
-        w = QWidget(parent)
+    def _build_cyber_drawer(self) -> QWidget:
+        w = QWidget()
         w.setFixedWidth(610)
         w.setStyleSheet(f"""
             QWidget#CyberDrawer {{
@@ -6226,13 +6588,13 @@ class MainWindow(QMainWindow):
         # Header
         hdr = QHBoxLayout()
         hdr.setContentsMargins(0, 0, 0, 0)
-        title = QLabel("◈  JARVIS INTELLIGENCE MATRIX")
+        title = QLabel("JARVIS INTELLIGENCE MATRIX")
         title.setFont(keena_font(9, True, 2))
         title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         hdr.addWidget(title)
         hdr.addStretch()
 
-        btn_close = QPushButton("✕")
+        btn_close = QPushButton("X")
         btn_close.setFont(keena_font(10, True))
         btn_close.setFixedSize(24, 24)
         btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -6253,7 +6615,7 @@ class MainWindow(QMainWindow):
         tabs_row.setSpacing(4)
         self._drawer_tabs = QStackedWidget()
 
-        tab_names = [("💬 CHAT & LOG", 0), ("📊 TELEMETRY", 1), ("🎙 AUDIO CORE", 2), ("⚙ SETTINGS", 3)]
+        tab_names = [("CHAT & LOG", 0), ("TELEMETRY", 1), ("AUDIO CORE", 2), ("SETTINGS", 3)]
         self._tab_btns = []
 
         def _make_tab_btn(name, idx):
@@ -6287,30 +6649,38 @@ class MainWindow(QMainWindow):
         p0_v.setContentsMargins(0, 4, 0, 0)
         p0_v.setSpacing(6)
 
-        split = QSplitter(Qt.Orientation.Vertical)
-        split.setStyleSheet(f"""
-            QSplitter::handle {{ background: {C.BORDER}; height: 3px; }}
-            QSplitter::handle:hover {{ background: {C.PRI}; }}
+        # Full conversation and activity chat log
+        self._log.setStyleSheet(f"""
+            QTextEdit {{
+                background: rgba(12, 3, 11, 220);
+                color: {C.TEXT};
+                border: 1px solid {C.BORDER_B};
+                border-radius: 4px;
+                padding: 6px 8px;
+            }}
+            QScrollBar:vertical {{
+                background: transparent;
+                width: 6px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {C.BORDER_B};
+                border-radius: 3px;
+            }}
         """)
-        split.addWidget(self._log)
-        split.addWidget(self._content_panel)
-        split.addWidget(self._quiz_panel)
-        split.setStretchFactor(0, 3)
-        split.setStretchFactor(1, 2)
-        p0_v.addWidget(split, stretch=1)
-
+        p0_v.addWidget(self._log, stretch=1)
         p0_v.addLayout(self._build_input_row())
         p0_v.addWidget(self._drop_zone)
         p0_v.addWidget(self._file_hint)
         self._drawer_tabs.addWidget(p0)
 
-        # Tab 1: Telemetry
+        # Tab 1: Telemetry (Armoury Crate hardware matrix)
         p1 = QWidget()
         p1.setStyleSheet("background: transparent;")
         p1_v = QVBoxLayout(p1)
-        p1_v.setContentsMargins(0, 4, 0, 0)
-        p1_v.setSpacing(6)
-        p1_v.addWidget(self._left_panel)
+        p1_v.setContentsMargins(0, 2, 0, 2)
+        p1_v.setSpacing(4)
+        self._armoury_telemetry = ArmouryCrateTelemetryWidget(self)
+        p1_v.addWidget(self._armoury_telemetry, stretch=1)
         self._drawer_tabs.addWidget(p1)
 
         # Tab 2: Audio Core
@@ -6332,7 +6702,7 @@ class MainWindow(QMainWindow):
         lay.setSpacing(10)
 
         def _hdr(txt):
-            l = QLabel(f"◈ {txt}")
+            l = QLabel(txt)
             l.setFont(keena_font(8, True))
             l.setStyleSheet(f"color: {C.PRI}; border-bottom: 1px solid {C.BORDER}; padding-bottom: 3px;")
             return l
@@ -6386,7 +6756,7 @@ class MainWindow(QMainWindow):
         self._wake_toggle_btn.clicked.connect(self._ui_toggle_wake)
         lay.addWidget(self._wake_toggle_btn)
 
-        ptt_info = QLabel("PUSH-TO-TALK: Press '🔴 PTT' on HUD, or hold Space/Alt")
+        ptt_info = QLabel("PUSH-TO-TALK: Hold Space or Alt to speak")
         ptt_info.setFont(keena_font(8))
         ptt_info.setStyleSheet(f"color: {C.TEXT_DIM};")
         lay.addWidget(ptt_info)
@@ -6411,7 +6781,7 @@ class MainWindow(QMainWindow):
         lay.setSpacing(8)
 
         def _hdr(txt):
-            l = QLabel(f"◈ {txt}")
+            l = QLabel(txt)
             l.setFont(keena_font(8, True))
             l.setStyleSheet(f"color: {C.PRI}; border-bottom: 1px solid {C.BORDER}; padding-bottom: 3px;")
             return l
@@ -6434,11 +6804,11 @@ class MainWindow(QMainWindow):
             return b
 
         lay.addWidget(_hdr("NEURAL INTELLIGENCE CONFIGURATION"))
-        lay.addWidget(_action_btn("🔑  CONFIGURE GEMINI API KEY", self._show_setup))
-        lay.addWidget(_action_btn("🧩  OPEN PLUGIN MANAGER", self._open_plugin_manager))
-        lay.addWidget(_action_btn("🎨  CUSTOMIZE APPEARANCE & IDENTITY", self._open_customize))
-        lay.addWidget(_action_btn("📱  PAIR PHONE WEB DASHBOARD", self._open_remote))
-        lay.addWidget(_action_btn("🖥  ENTER BIG SCREEN MODE (F11)", self._toggle_fullscreen))
+        lay.addWidget(_action_btn("CONFIGURE GEMINI API KEY", self._show_setup))
+        lay.addWidget(_action_btn("OPEN PLUGIN MANAGER", self._open_plugin_manager))
+        lay.addWidget(_action_btn("CUSTOMIZE APPEARANCE & IDENTITY", self._open_customize))
+        lay.addWidget(_action_btn("PAIR PHONE WEB DASHBOARD", self._open_remote))
+        lay.addWidget(_action_btn("ENTER BIG SCREEN MODE (F11)", self._toggle_fullscreen))
 
         lay.addStretch()
         return w
@@ -6458,12 +6828,29 @@ class MainWindow(QMainWindow):
 
         if hasattr(self, "_drawer"):
             self._drawer.setVisible(self._expanded)
-        if hasattr(self, "_hud_exp_btn"):
-            self._hud_exp_btn.setText("COLLAPSE" if self._expanded else "EXPAND")
+
+        screen = QApplication.primaryScreen().availableGeometry()
+        curr = self.geometry()
+
         if self._expanded:
-            self.resize(800, self.height())
+            new_w = min(1040, screen.width() - 40)
+            new_h = max(580, curr.height())
+            right_anchor = curr.x() + curr.width()
+            new_x = max(screen.left() + 20, right_anchor - new_w)
+            self.setGeometry(new_x, curr.y(), new_w, new_h)
+            if hasattr(self, "_hud_exp_btn"):
+                self._hud_exp_btn.setText("COLLAPSE")
+                self._hud_exp_btn.setToolTip("Collapse drawer into compact HUD")
         else:
-            self.resize(420, self.height())
+            new_w = 420
+            new_h = 580
+            right_anchor = curr.x() + curr.width()
+            new_x = max(screen.left() + 20, right_anchor - new_w)
+            self.setGeometry(new_x, curr.y(), new_w, new_h)
+            self.resize(new_w, new_h)
+            if hasattr(self, "_hud_exp_btn"):
+                self._hud_exp_btn.setText("EXPAND")
+                self._hud_exp_btn.setToolTip("Expand attached JARVIS Intelligence Matrix")
 
     def _toggle_fullscreen(self):
         self._is_fullscreen = not getattr(self, "_is_fullscreen", False)
@@ -6487,6 +6874,8 @@ class MainWindow(QMainWindow):
 
     def _on_log_line(self, text: str):
         self._log.append_log(text)
+        if hasattr(self, "bottom_chat_dock") and hasattr(self.bottom_chat_dock, "_dock_log"):
+            self.bottom_chat_dock._dock_log.append_log(text)
         asst = getattr(self, "_assistant_name", "JARVIS").upper()
         if text.startswith("You: "):
             self.hud.set_user_text(text[5:].strip())
@@ -6500,6 +6889,14 @@ class MainWindow(QMainWindow):
                 if clean and len(clean) < 50:
                     self.hud.add_card(clean[:32])
 
+    def _on_stream_user(self, text: str):
+        if hasattr(self, "hud") and hasattr(self.hud, "stream_user_text"):
+            self.hud.stream_user_text(text)
+
+    def _on_stream_reply(self, text: str):
+        if hasattr(self, "hud") and hasattr(self.hud, "stream_reply_text"):
+            self.hud.stream_reply_text(text)
+
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
             self._drag_start = e.globalPosition().toPoint()
@@ -6510,7 +6907,6 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_drag_start") and self._drag_start and e.buttons() == Qt.MouseButton.LeftButton:
             delta = e.globalPosition().toPoint() - self._drag_start
             self.move(self._win_start + delta)
-            self._update_dots_overlay_position()
         super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e):
@@ -7120,6 +7516,12 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+        if hasattr(self, "_armoury_telemetry") and self._armoury_telemetry:
+            try:
+                self._armoury_telemetry.update_metrics(snap)
+            except Exception:
+                pass
+
 
     def _build_header(self) -> QWidget:
         w = QWidget()
@@ -7206,7 +7608,7 @@ class MainWindow(QMainWindow):
 
     def _tick_clock(self):
         if hasattr(self, "_clock_lbl"):
-            self._clock_lbl.setText(time.strftime("%H:%M:%S"))
+            self._clock_lbl.setText(time.strftime("%I:%M:%S %p"))
         if hasattr(self, "_date_lbl"):
             self._date_lbl.setText(time.strftime("%a %d %b %Y"))
 
@@ -7719,18 +8121,14 @@ class MainWindow(QMainWindow):
         import time as _time
         self.hud.glance(0.0, -0.85, hold=1.3)
         self._content_title_lbl.setText(title.upper()[:48])
-        self._content_ts_lbl.setText(_time.strftime("%H:%M:%S"))
+        self._content_ts_lbl.setText(_time.strftime("%I:%M:%S %p"))
         self._content_display.setPlainText(text)
         self._content_display.moveCursor(
             self._content_display.textCursor().MoveOperation.Start
         )
         self._content_panel.show()
         if hasattr(self, "left_search_dock"):
-            self.left_search_dock.popup(title, _time.strftime("%H:%M:%S"))
-        if hasattr(self, "_drawer"):
-            self._drawer.setVisible(False)
-        if hasattr(self, "_drawer_tabs"):
-            self._drawer_tabs.setCurrentIndex(0)
+            self.left_search_dock.popup(title, _time.strftime("%I:%M:%S %p"))
 
     # ── the coding agent, live ───────────────────────────────────────────────
     # The panel under the head shows a folder job while it runs: what was asked,
@@ -7803,7 +8201,7 @@ class MainWindow(QMainWindow):
         title = f"CODE AGENT — {job.get('folder', '')} · {job.get('model', '')}"
         first = self._content_title_lbl.text() != title.upper()[:48]
         self._content_title_lbl.setText(title.upper()[:48])
-        self._content_ts_lbl.setText(_time.strftime("%H:%M:%S"))
+        self._content_ts_lbl.setText(_time.strftime("%I:%M:%S %p"))
         bar = self._content_display.verticalScrollBar()
         keep = 0 if first else bar.value()
         self._content_display.setHtml("".join(parts))
@@ -7840,11 +8238,7 @@ class MainWindow(QMainWindow):
     def _show_review(self, title: str, summary: str, findings, unclear):
         """Slot — Qt main thread. Lays a document review into the content panel."""
         if hasattr(self, "left_search_dock"):
-            self.left_search_dock.popup("REVIEW: " + title, time.strftime("%H:%M:%S"))
-        if not getattr(self, "_expanded", False):
-            self._toggle_expanded(True)
-        if hasattr(self, "_drawer_tabs"):
-            self._drawer_tabs.setCurrentIndex(0)
+            self.left_search_dock.popup("REVIEW: " + title, time.strftime("%I:%M:%S %p"))
         e = self._esc
         parts = [f'<div style="color:{C.TEXT}; font-family:Courier New;">']
 
@@ -7896,7 +8290,7 @@ class MainWindow(QMainWindow):
         # dotted capital İ. Python has no locale-aware upper to reach for, and
         # imposing one language's rules on all of them is the bug, not the fix.
         self._content_title_lbl.setText((title or "Document")[:48])
-        self._content_ts_lbl.setText(_time.strftime("%H:%M:%S"))
+        self._content_ts_lbl.setText(_time.strftime("%I:%M:%S %p"))
         self._content_display.setHtml("".join(parts))
         self._content_display.moveCursor(
             self._content_display.textCursor().MoveOperation.Start)
@@ -8021,11 +8415,7 @@ class MainWindow(QMainWindow):
         if not questions:
             return
         if hasattr(self, "left_search_dock"):
-            self.left_search_dock.popup("QUIZ: " + (topic or "QUIZ"), time.strftime("%H:%M:%S"))
-        if not getattr(self, "_expanded", False):
-            self._toggle_expanded(True)
-        if hasattr(self, "_drawer_tabs"):
-            self._drawer_tabs.setCurrentIndex(0)
+            self.left_search_dock.popup("QUIZ: " + (topic or "QUIZ"), time.strftime("%I:%M:%S %p"))
         self._quiz = {
             "topic": topic or "",
             "questions": list(questions),
@@ -8894,7 +9284,7 @@ class MainWindow(QMainWindow):
                 """)
         if hasattr(self, "_mute_btn"):
             if self._muted:
-                self._mute_btn.setText("🔇  MICROPHONE MUTED")
+                self._mute_btn.setText("MICROPHONE MUTED")
                 self._mute_btn.setStyleSheet(f"""
                     QPushButton {{
                         background: #140006; color: {C.MUTED_C};
@@ -8902,7 +9292,7 @@ class MainWindow(QMainWindow):
                     }}
                 """)
             else:
-                self._mute_btn.setText("🎙  MICROPHONE ACTIVE")
+                self._mute_btn.setText("MICROPHONE ACTIVE")
                 self._mute_btn.setStyleSheet(f"""
                     QPushButton {{
                         background: {C.PANEL}; color: {C.PRI};
@@ -9215,6 +9605,22 @@ class JarvisUI:
         except (RuntimeError, AttributeError):
             pass
 
+    def stream_user_text(self, text: str):
+        try:
+            if not self._is_alive():
+                return
+            self._win._stream_user_sig.emit(str(text or ""))
+        except (RuntimeError, AttributeError):
+            pass
+
+    def stream_reply_text(self, text: str):
+        try:
+            if not self._is_alive():
+                return
+            self._win._stream_reply_sig.emit(str(text or ""))
+        except (RuntimeError, AttributeError):
+            pass
+
     def wait_for_api_key(self):
         while not self._is_alive() or not self._win._ready:
             time.sleep(0.1)
@@ -9356,60 +9762,50 @@ class JarvisUI:
             self.set_state("LISTENING")
 
     def open_display(self, content_type: str, source: str, title: str = "") -> int:
-        if not self._is_alive():
+        """Thread-safe: Open an image or video in a new named floating display window."""
+        try:
+            if not self._is_alive():
+                return 0
+            self._win._display_counter += 1
+            disp_id = self._win._display_counter
+            self._win._open_display_sig.emit(str(content_type), str(source), f"{disp_id}:{title}")
+            return disp_id
+        except (RuntimeError, AttributeError):
             return 0
-        from PyQt6.QtCore import QThread
-        app = QApplication.instance()
-        if app and QThread.currentThread() == app.thread():
-            return self._win._on_open_display(content_type, source, title)
-        res = []
-        ev = threading.Event()
-        def _invoke():
-            try:
-                res.append(self._win._on_open_display(content_type, source, title))
-            finally:
-                ev.set()
-        QTimer.singleShot(0, _invoke)
-        ev.wait(timeout=5.0)
-        return res[0] if res else 0
 
     def focus_display(self, display_id: int) -> bool:
-        if not self._is_alive():
+        """Thread-safe: Focus display N and bring to front in center of screen."""
+        try:
+            if not self._is_alive():
+                return False
+            self._win._focus_display_sig.emit(int(display_id))
+            return True
+        except (RuntimeError, AttributeError):
             return False
-        from PyQt6.QtCore import QThread
-        app = QApplication.instance()
-        if app and QThread.currentThread() == app.thread():
-            return self._win._on_focus_display(int(display_id))
-        res = []
-        ev = threading.Event()
-        def _invoke():
-            try:
-                res.append(self._win._on_focus_display(int(display_id)))
-            finally:
-                ev.set()
-        QTimer.singleShot(0, _invoke)
-        ev.wait(timeout=5.0)
-        return res[0] if res else False
 
-    def close_display_window(self, display_id: int = 0) -> None:
-        if not self._is_alive():
-            return
-        self._win._close_display_sig.emit(int(display_id))
+    def close_display_window(self, display_id: int = 0) -> bool:
+        """Thread-safe: Close display N (or 0 for all)."""
+        try:
+            if not self._is_alive():
+                return False
+            self._win._close_display_sig.emit(int(display_id))
+            return True
+        except (RuntimeError, AttributeError):
+            return False
 
     def get_open_displays(self) -> list[dict]:
-        if not self._is_alive():
+        """Thread-safe query for currently open displays."""
+        try:
+            if not self._is_alive():
+                return []
+            res = []
+            for d_id, w in list(self._win._displays.items()):
+                res.append({
+                    "display_id": d_id,
+                    "name": getattr(w, "display_name", f"DISPLAY {d_id}"),
+                    "type": getattr(w, "content_type", "image"),
+                    "title": getattr(w, "title_text", ""),
+                })
+            return res
+        except (RuntimeError, AttributeError):
             return []
-        res = []
-        for did, win in self._win._displays.items():
-            res.append({"id": did, "name": win.display_name, "title": win.title_text, "type": win.content_type})
-        return res
-
-    def stream_user_text(self, text: str) -> None:
-        if not self._is_alive():
-            return
-        self._win._stream_user_sig.emit(str(text or ""))
-
-    def stream_reply_text(self, text: str) -> None:
-        if not self._is_alive():
-            return
-        self._win._stream_reply_sig.emit(str(text or ""))
