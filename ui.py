@@ -104,7 +104,7 @@ class C:
     PRI_DIM   = "#990e28"
     PRI_GHO   = "#2e040a"
     ACC       = "#ff5252"
-    ACC2      = "#ff7597"
+    ACC2      = "#ff5252"
     GREEN     = "#00ffaa"
     GREEN_D   = "#00aa66"
     RED       = "#ff1744"
@@ -126,6 +126,30 @@ _HUE_LINKED = (
 _PALETTE_DEFAULTS: dict[str, str] = {k: getattr(C, k) for k in _HUE_LINKED}
 
 DEFAULT_UI_COLOR = _PALETTE_DEFAULTS["PRI"]
+
+# ── State-Based Color System ─────────────────────────────────────────────────
+# Listening:  Red (#ff1744)
+# Speaking:   Yellow (#ffd700)
+# Thinking:   Bright glowing light blue (#38BDF8, #7DD3FC, rgba(56,189,248,0.65), #BAE6FD)
+# Processing: Bright glowing light blue (#38BDF8, #7DD3FC, rgba(56,189,248,0.65), #BAE6FD)
+COLOR_STATE_LISTENING  = QColor("#ff1744")
+COLOR_STATE_SPEAKING   = QColor(255, 215, 0)
+COLOR_STATE_THINKING   = QColor("#38BDF8")
+COLOR_STATE_PROCESSING = QColor("#38BDF8")
+
+COLOR_BLUE_PRIMARY     = QColor("#38BDF8")
+COLOR_BLUE_GLOW        = QColor("#7DD3FC")
+COLOR_BLUE_OUTER       = QColor(56, 189, 248, 166)   # rgba(56, 189, 248, 0.65)
+COLOR_BLUE_HIGHLIGHT   = QColor("#BAE6FD")
+
+
+def _lerp_color(c1: QColor, c2: QColor, factor: float) -> QColor:
+    factor = max(0.0, min(1.0, factor))
+    r = int(c1.red() + (c2.red() - c1.red()) * factor)
+    g = int(c1.green() + (c2.green() - c1.green()) * factor)
+    b = int(c1.blue() + (c2.blue() - c1.blue()) * factor)
+    a = int(c1.alpha() + (c2.alpha() - c1.alpha()) * factor)
+    return QColor(r, g, b, a)
 
 
 def apply_ui_accent(accent_hex: str) -> bool:
@@ -634,6 +658,13 @@ class HudCanvas(QWidget):
         self._big_mode = False
         self._mini_mode = False
 
+        self._active_state = "STANDBY"
+        self._prev_state = "STANDBY"
+        self._state_start_t = time.time()
+        self._prev_accent = COLOR_STATE_LISTENING
+        self._current_accent = COLOR_STATE_LISTENING
+        self._reduced_motion = False
+
         self._last_t = time.time()
         self._step_t = time.time()
         self._drag_start = None
@@ -643,6 +674,18 @@ class HudCanvas(QWidget):
         self._tmr = QTimer(self)
         self._tmr.timeout.connect(self._step)
         self._tmr.start(16)           # 60 FPS animation
+
+    def on_state_changed(self, new_state: str):
+        """Immediately update state, reset phase, and transition colors smoothly."""
+        st = (new_state or "STANDBY").upper()
+        if st != getattr(self, "_active_state", None):
+            self._prev_state = getattr(self, "_active_state", "STANDBY")
+            self._prev_accent = getattr(self, "_current_accent", COLOR_STATE_LISTENING)
+            self._active_state = st
+            self._state_start_t = time.time()
+            self.state = st
+            self.speaking = (st == "SPEAKING")
+            self.update()
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -838,6 +881,12 @@ class HudCanvas(QWidget):
         if self.muted:
             st = "MUTED"
 
+        if st != getattr(self, "_active_state", None):
+            self._prev_state = getattr(self, "_active_state", "STANDBY")
+            self._prev_accent = getattr(self, "_current_accent", COLOR_STATE_LISTENING)
+            self._active_state = st
+            self._state_start_t = now
+
         speed = {
             "THINKING": 220, "PROCESSING": 180,
             "LISTENING": 28, "SPEAKING": 45,
@@ -876,10 +925,17 @@ class HudCanvas(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         t = time.time()
+        now = t
         w, h = self.width(), self.height()
         st = (self.state or "STANDBY").upper()
         if self.muted:
             st = "MUTED"
+
+        if st != getattr(self, "_active_state", None):
+            self._prev_state = getattr(self, "_active_state", "STANDBY")
+            self._prev_accent = getattr(self, "_current_accent", COLOR_STATE_LISTENING)
+            self._active_state = st
+            self._state_start_t = now
 
         CYAN_ACC = qcol(C.PRI)
         DEEP_ACC = qcol(C.ACC)
@@ -888,25 +944,39 @@ class HudCanvas(QWidget):
         ALERT_COL = qcol(C.MUTED_C)
 
         if self.muted or st == "MUTED":
-            accent = QColor(138, 138, 138)         # GRAY when mic is muted
-            core_mid = QColor(190, 190, 190, 240)
-            glow_col = QColor(138, 138, 138)
+            target_accent = QColor(138, 138, 138)         # GRAY when mic is muted
+            target_core_mid = QColor(190, 190, 190, 240)
+            target_glow_col = QColor(138, 138, 138)
+            pulse_speed = 1.0
         elif self.speaking or st == "SPEAKING":
-            accent = QColor(255, 215, 0)           # YELLOW when JARVIS is speaking
-            core_mid = QColor(255, 245, 180, 240)
-            glow_col = QColor(255, 215, 0)
-        elif st in ("ERROR", "INTERRUPTED"):
-            accent = ALERT_COL
-            core_mid = QColor(255, 220, 225, 240)
-            glow_col = ALERT_COL
+            target_accent = COLOR_STATE_SPEAKING           # YELLOW when JARVIS is speaking
+            target_core_mid = QColor(255, 245, 180, 240)
+            target_glow_col = COLOR_STATE_SPEAKING
+            pulse_speed = 4.5
         elif st in ("THINKING", "PROCESSING"):
-            accent = DEEP_ACC
-            core_mid = QColor(255, 220, 225, 240)
-            glow_col = DEEP_ACC
+            target_accent = COLOR_BLUE_PRIMARY            # Bright glowing light blue (#38BDF8)
+            target_core_mid = COLOR_BLUE_HIGHLIGHT        # Strong highlight (#BAE6FD)
+            target_glow_col = COLOR_BLUE_GLOW             # Bright cyan-blue glow (#7DD3FC)
+            pulse_speed = 5.0 if st == "THINKING" else 5.5
+        elif st in ("ERROR", "INTERRUPTED"):
+            target_accent = ALERT_COL
+            target_core_mid = QColor(255, 220, 225, 240)
+            target_glow_col = ALERT_COL
+            pulse_speed = 6.0
         else:
-            accent = CYAN_ACC
-            core_mid = QColor(255, 225, 230, 245)
-            glow_col = CYAN_ACC
+            # Listening / Standby / default -> RED (#ff1744)
+            target_accent = COLOR_STATE_LISTENING
+            target_core_mid = QColor(255, 225, 230, 245)
+            target_glow_col = COLOR_STATE_LISTENING
+            pulse_speed = 2.8
+
+        t_state = t - getattr(self, "_state_start_t", t)
+        trans_progress = min(1.0, t_state / 0.22)
+        prev_accent = getattr(self, "_prev_accent", target_accent)
+        accent = _lerp_color(prev_accent, target_accent, trans_progress) if trans_progress < 1.0 else target_accent
+        self._current_accent = accent
+        core_mid = target_core_mid
+        glow_col = target_glow_col
 
         boot = 1.0
 
@@ -993,16 +1063,41 @@ class HudCanvas(QWidget):
         lvl = getattr(self, "level", 0.0)
         p.setBrush(Qt.BrushStyle.NoBrush)
 
-        # Soft radial glow
-        glow_r = (145 + 30 * lvl)
-        g = QRadialGradient(center, max(glow_r, 1))
-        g.setColorAt(0.0, rgba(glow_col, 95))
-        g.setColorAt(0.45, rgba(glow_col, 30))
-        g.setColorAt(1.0, rgba(glow_col, 0))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(g)
-        p.drawEllipse(center, glow_r, glow_r)
-        p.setBrush(Qt.BrushStyle.NoBrush)
+        # Soft radial glow with state-based pulsing
+        pulse = 0.5 + 0.5 * math.sin(t_state * pulse_speed)
+        if getattr(self, "_reduced_motion", False):
+            pulse = 0.5
+
+        if st in ("THINKING", "PROCESSING"):
+            glow_r = 145 + 32 * pulse + 20 * lvl
+            g = QRadialGradient(center, max(glow_r, 1))
+            g.setColorAt(0.0, QColor(125, 211, 252, int(155 + 75 * pulse)))  # #7DD3FC bright glow
+            g.setColorAt(0.42, QColor(56, 189, 248, int(95 + 71 * pulse)))  # rgba(56, 189, 248, 0.65) outer glow
+            g.setColorAt(1.0, QColor(56, 189, 248, 0))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(g)
+            p.drawEllipse(center, glow_r, glow_r)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+        elif st == "LISTENING":
+            glow_r = 145 + 24 * pulse + 35 * lvl
+            g = QRadialGradient(center, max(glow_r, 1))
+            g.setColorAt(0.0, rgba(glow_col, int(100 + 60 * pulse)))
+            g.setColorAt(0.45, rgba(glow_col, int(35 + 45 * pulse)))
+            g.setColorAt(1.0, rgba(glow_col, 0))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(g)
+            p.drawEllipse(center, glow_r, glow_r)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+        else:
+            glow_r = (145 + 30 * lvl)
+            g = QRadialGradient(center, max(glow_r, 1))
+            g.setColorAt(0.0, rgba(glow_col, 95))
+            g.setColorAt(0.45, rgba(glow_col, 30))
+            g.setColorAt(1.0, rgba(glow_col, 0))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(g)
+            p.drawEllipse(center, glow_r, glow_r)
+            p.setBrush(Qt.BrushStyle.NoBrush)
 
         # Outer ring with 4 notch markers
         R = 125
@@ -1104,12 +1199,20 @@ class HudCanvas(QWidget):
         p.drawEllipse(center, 38, 38)
 
         # Glowing core: pure white center fading to state color
-        core_r = (28 + 6 * lvl + 1.5 * math.sin(t * 2.2))
-        cg = QRadialGradient(center, max(core_r, 1))
-        cg.setColorAt(0.0, QColor(255, 255, 255, 255))
-        cg.setColorAt(0.35, core_mid)
-        cg.setColorAt(0.75, rgba(accent, 225))
-        cg.setColorAt(1.0, rgba(accent, 40))
+        if st in ("THINKING", "PROCESSING"):
+            core_r = (28 + 6 * pulse + 1.5 * math.sin(t * 3.5))
+            cg = QRadialGradient(center, max(core_r, 1))
+            cg.setColorAt(0.0, QColor(255, 255, 255, 255))
+            cg.setColorAt(0.35, COLOR_BLUE_HIGHLIGHT)     # #BAE6FD Strong highlight
+            cg.setColorAt(0.75, COLOR_BLUE_PRIMARY)       # #38BDF8 Primary light blue
+            cg.setColorAt(1.0, QColor(56, 189, 248, 35))
+        else:
+            core_r = (28 + 6 * lvl + 1.5 * math.sin(t * 2.2))
+            cg = QRadialGradient(center, max(core_r, 1))
+            cg.setColorAt(0.0, QColor(255, 255, 255, 255))
+            cg.setColorAt(0.35, core_mid)
+            cg.setColorAt(0.75, rgba(accent, 225))
+            cg.setColorAt(1.0, rgba(accent, 40))
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(cg)
         p.drawEllipse(center, core_r, core_r)
@@ -1268,11 +1371,35 @@ class HudCanvas(QWidget):
     def _paint_mini_circle(self, p: QPainter, accent: QColor, core_mid: QColor, glow_col: QColor, t: float):
         w, h = self.width(), self.height()
         cx, cy = w / 2.0, h / 2.0
+        now = time.time()
+        st = (self.state or "STANDBY").upper()
+        if self.muted:
+            st = "MUTED"
 
-        # Solid non-transparent deep black background around and inside the circle
+        t_state = now - getattr(self, "_state_start_t", now)
+        lvl = getattr(self, "level", 0.0)
+
+        # State-based pulse calculation
+        if st in ("THINKING", "PROCESSING"):
+            pulse_speed = 5.0 if st == "THINKING" else 5.5
+            pulse = 0.5 + 0.5 * math.sin(t_state * pulse_speed)
+        elif st == "LISTENING":
+            pulse_speed = 2.8
+            pulse = 0.5 + 0.5 * math.sin(t_state * pulse_speed)
+        elif self.speaking or st == "SPEAKING":
+            pulse_speed = 4.5
+            pulse = 0.5 + 0.5 * math.sin(t * pulse_speed)
+        else:
+            pulse = 0.5 + 0.5 * math.sin(t_state * 2.0)
+
+        if getattr(self, "_reduced_motion", False):
+            pulse = 0.5
+
+        # Solid non-transparent deep black background disc with state-pulsing border
         p.save()
         disc_r = min(w, h) / 2.0 - 1.0
-        p.setPen(QPen(rgba(accent, 255), 2.0))
+        border_alpha = int(195 + 60 * pulse) if st != "SPEAKING" else 240
+        p.setPen(QPen(rgba(accent, border_alpha), 2.2))
         p.setBrush(QColor(0, 0, 0, 255))
         p.drawEllipse(QPointF(cx, cy), disc_r, disc_r)
         p.restore()
@@ -1285,29 +1412,76 @@ class HudCanvas(QWidget):
         p.scale(scale, scale)
 
         center = QPointF(0, 0)
-        lvl = getattr(self, "level", 0.0)
 
         # Inner solid black disc to protect animation contrast
         p.save()
-        p.setPen(QPen(rgba(accent, 220), 2.5))
+        p.setPen(QPen(rgba(accent, int(180 + 55 * pulse)), 2.5))
         p.setBrush(QColor(0, 0, 0, 255))
         p.drawEllipse(center, 126, 126)
         p.restore()
 
-        # Soft radial glow (surges with sound)
-        glow_r = 135 + 75 * lvl
-        g = QRadialGradient(center, max(glow_r, 1))
-        g.setColorAt(0.0, rgba(glow_col, 130 + int(35 * lvl)))
-        g.setColorAt(0.5, rgba(glow_col, 35 + int(25 * lvl)))
-        g.setColorAt(1.0, rgba(glow_col, 0))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(g)
-        p.drawEllipse(center, glow_r, glow_r)
-        p.setBrush(Qt.BrushStyle.NoBrush)
+        # Radial glow based on state
+        if st in ("THINKING", "PROCESSING"):
+            # Bright glowing light blue continuous pulsing animation
+            glow_r = 135 + 40 * pulse
+            g = QRadialGradient(center, max(glow_r, 1))
+            g.setColorAt(0.0, QColor(125, 211, 252, int(160 + 75 * pulse)))  # #7DD3FC bright glow
+            g.setColorAt(0.4, QColor(56, 189, 248, int(100 + 66 * pulse)))  # rgba(56, 189, 248, 0.65) outer glow
+            g.setColorAt(1.0, QColor(56, 189, 248, 0))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(g)
+            p.drawEllipse(center, glow_r, glow_r)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+
+            # Conical radar sweep in light blue
+            sweep = QConicalGradient(center, -self.spin * 1.5)
+            sweep.setColorAt(0.0, QColor(125, 211, 252, int(130 + 70 * pulse)))
+            sweep.setColorAt(0.12, QColor(56, 189, 248, 0))
+            sweep.setColorAt(1.0, QColor(56, 189, 248, 0))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(sweep)
+            p.drawEllipse(center, 125, 125)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+
+        elif st == "LISTENING":
+            # Gentle red blinking / pulsing effect: periodic increase and decrease
+            glow_r = 130 + 35 * pulse + 45 * lvl
+            g = QRadialGradient(center, max(glow_r, 1))
+            g.setColorAt(0.0, rgba(glow_col, int(115 + 85 * pulse + 40 * lvl)))
+            g.setColorAt(0.5, rgba(glow_col, int(30 + 40 * pulse + 20 * lvl)))
+            g.setColorAt(1.0, rgba(glow_col, 0))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(g)
+            p.drawEllipse(center, glow_r, glow_r)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+
+        elif self.speaking or st == "SPEAKING":
+            # Speaking yellow glow surging with audio
+            glow_r = 135 + 75 * lvl
+            g = QRadialGradient(center, max(glow_r, 1))
+            g.setColorAt(0.0, rgba(glow_col, 130 + int(35 * lvl)))
+            g.setColorAt(0.5, rgba(glow_col, 35 + int(25 * lvl)))
+            g.setColorAt(1.0, rgba(glow_col, 0))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(g)
+            p.drawEllipse(center, glow_r, glow_r)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+
+        else:
+            # Standby / Default subtle glow
+            glow_r = 130 + 20 * pulse
+            g = QRadialGradient(center, max(glow_r, 1))
+            g.setColorAt(0.0, rgba(glow_col, int(90 + 40 * pulse)))
+            g.setColorAt(0.5, rgba(glow_col, int(25 + 20 * pulse)))
+            g.setColorAt(1.0, rgba(glow_col, 0))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(g)
+            p.drawEllipse(center, glow_r, glow_r)
+            p.setBrush(Qt.BrushStyle.NoBrush)
 
         # Outer ring
         R = 125
-        p.setPen(QPen(rgba(accent, 220), 2.5))
+        p.setPen(QPen(rgba(accent, int(190 + 55 * pulse)), 2.5))
         p.drawEllipse(center, R, R)
 
         # 4 Notch markers
@@ -1321,7 +1495,7 @@ class HudCanvas(QWidget):
             ]))
         p.setBrush(Qt.BrushStyle.NoBrush)
 
-        # Dial ticks (pulses inward with sound)
+        # Dial ticks
         p.save()
         p.rotate(-self.spin * 0.35)
         for k in range(36):
@@ -1342,10 +1516,7 @@ class HudCanvas(QWidget):
                 a0 = start + s * 360 / segs
                 p.drawArc(rect, int(-a0 * 16), int(-span * 16))
 
-        # Dynamic Voice ring / speech bars (surges with listening and speaking sound)
-        st = (self.state or "STANDBY").upper()
-        if self.muted:
-            st = "MUTED"
+        # Dynamic Voice ring / speech bars / thinking pulse
         base_r = 62
         if st == "SPEAKING" or self.speaking:
             bars = 24
@@ -1367,6 +1538,9 @@ class HudCanvas(QWidget):
                 path.moveTo(pt) if k == 0 else path.lineTo(pt)
             p.setPen(QPen(rgba(accent, 210 + int(45 * lvl)), 2.2 + 1.2 * lvl))
             p.drawPath(path)
+        elif st in ("THINKING", "PROCESSING"):
+            p.setPen(QPen(rgba(accent, int(190 + 65 * pulse)), 2.4))
+            p.drawEllipse(center, base_r, base_r)
         else:
             p.setPen(QPen(rgba(accent, 140), 1.5))
             p.drawEllipse(center, base_r, base_r)
@@ -1375,20 +1549,37 @@ class HudCanvas(QWidget):
         p.save()
         p.rotate(self.spin * 0.6)
         coil = QRectF(-46, -46, 92, 92)
-        p.setPen(QPen(rgba(accent, 150 + int(105 * lvl)), 8.0 + 3.5 * lvl, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+        coil_alpha = int(170 + 75 * pulse) if st in ("THINKING", "PROCESSING", "LISTENING") else (150 + int(105 * lvl))
+        p.setPen(QPen(rgba(accent, coil_alpha), 8.0 + 3.5 * lvl, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
         for k in range(10):
             p.drawArc(coil, int(k * 36 * 16), int(25 * 16))
         p.restore()
         p.setPen(QPen(rgba(accent, 180), 1.8))
         p.drawEllipse(center, 38, 38)
 
-        # Glowing core (expands with voice sound)
-        core_r = (26 + 26 * lvl + 2.0 * math.sin(t * 3.0))
-        cg = QRadialGradient(center, max(core_r, 1))
-        cg.setColorAt(0.0, QColor(255, 255, 255, 255))
-        cg.setColorAt(0.35, core_mid)
-        cg.setColorAt(0.75, rgba(accent, 235))
-        cg.setColorAt(1.0, rgba(accent, 40))
+        # Glowing core: pure white center fading to state color
+        if st in ("THINKING", "PROCESSING"):
+            core_r = (26 + 8 * pulse + 1.5 * math.sin(t * 3.5))
+            cg = QRadialGradient(center, max(core_r, 1))
+            cg.setColorAt(0.0, QColor(255, 255, 255, 255))
+            cg.setColorAt(0.35, COLOR_BLUE_HIGHLIGHT)     # #BAE6FD
+            cg.setColorAt(0.75, COLOR_BLUE_PRIMARY)       # #38BDF8
+            cg.setColorAt(1.0, QColor(56, 189, 248, 40))
+        elif st == "LISTENING":
+            core_r = (24 + 6 * pulse + 24 * lvl + 2.0 * math.sin(t * 3.0))
+            cg = QRadialGradient(center, max(core_r, 1))
+            cg.setColorAt(0.0, QColor(255, 255, 255, 255))
+            cg.setColorAt(0.35, core_mid)
+            cg.setColorAt(0.75, rgba(accent, 235))
+            cg.setColorAt(1.0, rgba(accent, 40))
+        else:
+            core_r = (26 + 26 * lvl + 2.0 * math.sin(t * 3.0))
+            cg = QRadialGradient(center, max(core_r, 1))
+            cg.setColorAt(0.0, QColor(255, 255, 255, 255))
+            cg.setColorAt(0.35, core_mid)
+            cg.setColorAt(0.75, rgba(accent, 235))
+            cg.setColorAt(1.0, rgba(accent, 40))
+
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(cg)
         p.drawEllipse(center, core_r, core_r)
@@ -4929,8 +5120,8 @@ class BottomChatDock(QWidget):
         self._outer.setObjectName("ChatDockOuter")
         self._outer.setStyleSheet(f"""
             QFrame#ChatDockOuter {{
-                background: rgba(14, 4, 13, 232);
-                border: 1px solid {C.BORDER_B};
+                background: rgba(10, 2, 4, 240);
+                border: 1px solid rgba(255, 23, 68, 0.45);
                 border-radius: 6px;
             }}
         """)
@@ -5140,8 +5331,8 @@ class LeftSearchDock(QWidget):
         self._outer.setObjectName("SearchDockOuter")
         self._outer.setStyleSheet(f"""
             QFrame#SearchDockOuter {{
-                background: rgba(14, 4, 13, 238);
-                border: 1px solid {C.BORDER_B};
+                background: rgba(10, 2, 4, 245);
+                border: 1px solid rgba(255, 23, 68, 0.45);
                 border-radius: 6px;
             }}
         """)
@@ -5153,43 +5344,7 @@ class LeftSearchDock(QWidget):
         lay.setContentsMargins(10, 8, 10, 8)
         lay.setSpacing(6)
 
-        hdr = QHBoxLayout()
-        hdr.setContentsMargins(0, 0, 0, 0)
-        hdr.setSpacing(6)
-
-        self._title_lbl = QLabel("SEARCH & INTEL MATRIX")
-        self._title_lbl.setFont(keena_font(9, bold=True, spacing=1.2))
-        self._title_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
-        hdr.addWidget(self._title_lbl)
-        hdr.addStretch()
-
-        self._ts_lbl = QLabel("")
-        self._ts_lbl.setFont(keena_font(8))
-        self._ts_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
-        hdr.addWidget(self._ts_lbl)
-
-        dismiss = QPushButton("DISMISS")
-        dismiss.setFont(keena_font(8, bold=True))
-        dismiss.setFixedHeight(22)
-        dismiss.setCursor(Qt.CursorShape.PointingHandCursor)
-        dismiss.setStyleSheet(f"""
-            QPushButton {{
-                background: rgba(255, 23, 68, 0.15);
-                color: {C.TEXT};
-                border: 1px solid {C.BORDER};
-                border-radius: 3px;
-                padding: 0 8px;
-            }}
-            QPushButton:hover {{
-                background: rgba(255, 23, 68, 0.35);
-                border-color: {C.PRI};
-                color: #ffffff;
-            }}
-        """)
-        dismiss.clicked.connect(self.hide)
-        hdr.addWidget(dismiss)
-        lay.addLayout(hdr)
-
+        # Unified container: contained panels (_content_panel, _quiz_panel) manage their own clean headers
         self._panel_cont = QWidget()
         self._panel_cont.setStyleSheet("background: transparent;")
         p_lay = QVBoxLayout(self._panel_cont)
@@ -5199,11 +5354,28 @@ class LeftSearchDock(QWidget):
         p_lay.addWidget(self._main_win._quiz_panel)
         lay.addWidget(self._panel_cont, stretch=1)
 
+        # Backward compatibility properties pointing to the active content title / timestamp
+        self._title_lbl = getattr(self._main_win, "_content_title_lbl", None)
+        self._ts_lbl = getattr(self._main_win, "_content_ts_lbl", None)
+
     def popup(self, title: str = "", timestamp: str = ""):
-        if title:
-            self._title_lbl.setText(f"SEARCH — {title.upper()[:32]}")
-        if timestamp:
-            self._ts_lbl.setText(timestamp)
+        if title and hasattr(self._main_win, "_content_title_lbl"):
+            clean_title = title.strip()
+            # Clean out duplicate prefixes
+            if clean_title.upper().startswith("SEARCH — ") or clean_title.upper().startswith("SEARCH - "):
+                clean_title = clean_title[9:].strip()
+            elif clean_title.upper().startswith("SEARCH:"):
+                clean_title = clean_title[7:].strip()
+
+            if not any(clean_title.upper().startswith(p) for p in ("SEARCH", "REVIEW", "QUIZ", "CODE AGENT", "BRIEFING", "TASK")):
+                display_title = f"SEARCH — {clean_title.upper()[:40]}"
+            else:
+                display_title = clean_title.upper()[:48]
+            self._main_win._content_title_lbl.setText(display_title)
+
+        if timestamp and hasattr(self._main_win, "_content_ts_lbl"):
+            self._main_win._content_ts_lbl.setText(timestamp)
+
         screen = QApplication.primaryScreen().availableGeometry()
         dock_w = min(480, max(380, screen.width() // 3))
         dock_h = min(580, screen.height() - 140)
@@ -5223,6 +5395,12 @@ class LeftSearchDock(QWidget):
         if self._drag_start and e.buttons() == Qt.MouseButton.LeftButton:
             delta = e.globalPosition().toPoint() - self._drag_start
             self.move(self._win_start + delta)
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        self._drag_start = None
+        self._win_start = None
+        super().mouseReleaseEvent(e)
         super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e):
@@ -5747,7 +5925,7 @@ class JarvisDisplayWindow(QWidget):
         self._min_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._min_btn.setStyleSheet(f"""
             QPushButton {{
-                background: rgba(30, 8, 26, 210);
+                background: rgba(24, 4, 8, 220);
                 color: {C.TEXT_DIM};
                 border: 1px solid {C.BORDER};
                 border-radius: 3px;
@@ -5766,7 +5944,7 @@ class JarvisDisplayWindow(QWidget):
         self._max_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._max_btn.setStyleSheet(f"""
             QPushButton {{
-                background: rgba(30, 8, 26, 210);
+                background: rgba(24, 4, 8, 220);
                 color: {C.TEXT_DIM};
                 border: 1px solid {C.BORDER};
                 border-radius: 3px;
@@ -5785,14 +5963,14 @@ class JarvisDisplayWindow(QWidget):
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet(f"""
             QPushButton {{
-                background: rgba(35, 8, 20, 210);
-                color: #ff6688;
-                border: 1px solid rgba(255, 102, 136, 0.4);
+                background: rgba(35, 6, 10, 210);
+                color: #ff5252;
+                border: 1px solid rgba(255, 23, 68, 0.4);
                 border-radius: 3px;
             }}
             QPushButton:hover {{
-                background: rgba(255, 51, 102, 0.45);
-                border-color: #ff3366;
+                background: rgba(255, 23, 68, 0.45);
+                border-color: #ff1744;
                 color: #ffffff;
             }}
         """)
@@ -5824,8 +6002,8 @@ class JarvisDisplayWindow(QWidget):
         self._goal_box = QWidget()
         self._goal_box.setStyleSheet(f"""
             QWidget {{
-                background: rgba(22, 6, 20, 235);
-                border: 1px solid rgba(255, 23, 68, 0.35);
+                background: rgba(18, 4, 6, 235);
+                border: 1px solid rgba(255, 23, 68, 0.4);
                 border-radius: 6px;
             }}
         """)
@@ -5898,9 +6076,9 @@ class JarvisDisplayWindow(QWidget):
         self._task_files_edit.setFrameShape(QFrame.Shape.NoFrame)
         self._task_files_edit.setStyleSheet(f"""
             QTextEdit {{
-                background: rgba(12, 3, 12, 220);
+                background: rgba(10, 2, 4, 220);
                 color: {C.TEXT};
-                border: 1px solid rgba(255, 23, 68, 0.25);
+                border: 1px solid rgba(255, 23, 68, 0.3);
                 border-radius: 4px;
                 padding: 6px;
                 font-family: 'Courier New';
@@ -5927,7 +6105,7 @@ class JarvisDisplayWindow(QWidget):
         self._task_log_edit.setFrameShape(QFrame.Shape.NoFrame)
         self._task_log_edit.setStyleSheet(f"""
             QTextEdit {{
-                background: rgba(6, 1, 6, 240);
+                background: rgba(6, 1, 2, 240);
                 color: {C.TEXT};
                 border: 1px solid rgba(255, 23, 68, 0.3);
                 border-radius: 4px;
@@ -5958,7 +6136,7 @@ class JarvisDisplayWindow(QWidget):
             b.setToolTip(tip)
             b.setStyleSheet(f"""
                 QPushButton {{
-                    background: rgba(28, 7, 24, 220);
+                    background: rgba(28, 4, 8, 220);
                     color: {C.TEXT};
                     border: 1px solid {C.PRI};
                     border-radius: 4px;
@@ -5992,15 +6170,15 @@ class JarvisDisplayWindow(QWidget):
         self._btn_stop_task = _act_btn("⏹ STOP TASK", "Halt running task")
         self._btn_stop_task.setStyleSheet(f"""
             QPushButton {{
-                background: rgba(45, 10, 20, 220);
-                color: #ff6688;
-                border: 1px solid rgba(255, 102, 136, 0.5);
+                background: rgba(35, 6, 10, 220);
+                color: #ff5252;
+                border: 1px solid rgba(255, 23, 68, 0.5);
                 border-radius: 4px;
                 padding: 5px 10px;
             }}
             QPushButton:hover {{
-                background: rgba(255, 51, 102, 0.4);
-                border-color: #ff3366;
+                background: rgba(255, 23, 68, 0.4);
+                border-color: #ff1744;
                 color: #ffffff;
             }}
         """)
@@ -6106,7 +6284,7 @@ class JarvisDisplayWindow(QWidget):
         if status == "done":
             phase_html.append("<span style='color:#00ffaa; font-weight:bold;'>✓ COMPLETE</span>")
         elif status == "failed":
-            phase_html.append("<span style='color:#ff3366; font-weight:bold;'>✕ FAILED</span>")
+            phase_html.append("<span style='color:#ff1744; font-weight:bold;'>✕ FAILED</span>")
 
         self._lbl_phases.setText(" &nbsp;➔&nbsp; ".join(phase_html))
 
@@ -6327,14 +6505,14 @@ class JarvisDisplayWindow(QWidget):
             self._play_btn = QPushButton("PAUSE")
             self._play_btn.setFont(keena_font(7, bold=True))
             self._play_btn.setFixedSize(48, 20)
-            self._play_btn.setStyleSheet(f"background: rgba(30, 8, 26, 210); color: #fff; border: 1px solid {C.PRI}; border-radius: 3px;")
+            self._play_btn.setStyleSheet(f"background: rgba(24, 4, 8, 220); color: #fff; border: 1px solid {C.PRI}; border-radius: 3px;")
             self._play_btn.clicked.connect(self._toggle_playback)
             c_bar.addWidget(self._play_btn)
 
             self._mute_btn = QPushButton("SOUND OFF")
             self._mute_btn.setFont(keena_font(7, bold=True))
             self._mute_btn.setFixedSize(68, 20)
-            self._mute_btn.setStyleSheet(f"background: rgba(30, 8, 26, 210); color: #fff; border: 1px solid {C.PRI}; border-radius: 3px;")
+            self._mute_btn.setStyleSheet(f"background: rgba(24, 4, 8, 220); color: #fff; border: 1px solid {C.PRI}; border-radius: 3px;")
             self._mute_btn.clicked.connect(self._toggle_sound)
             c_bar.addWidget(self._mute_btn)
             c_bar.addStretch()
@@ -7187,7 +7365,7 @@ class MainWindow(QMainWindow):
             b.setToolTip(tip)
             b.setStyleSheet(f"""
                 QPushButton {{
-                    background: rgba(30, 8, 26, 210);
+                    background: rgba(24, 4, 8, 220);
                     color: {C.TEXT};
                     border: 1px solid {C.BORDER_B};
                     border-radius: 4px;
@@ -7223,16 +7401,16 @@ class MainWindow(QMainWindow):
         self._hud_close_btn = _btn("CLOSE", "Close JARVIS Display")
         self._hud_close_btn.setStyleSheet(f"""
             QPushButton {{
-                background: rgba(35, 8, 20, 190);
-                color: #ff6688;
-                border: 1px solid rgba(255, 102, 136, 0.35);
+                background: rgba(35, 6, 10, 210);
+                color: #ff5252;
+                border: 1px solid rgba(255, 23, 68, 0.4);
                 border-radius: 4px;
                 padding: 3px 8px;
             }}
             QPushButton:hover {{
-                background: rgba(255, 51, 102, 0.45);
+                background: rgba(255, 23, 68, 0.45);
                 color: #ffffff;
-                border-color: #ff3366;
+                border-color: #ff1744;
             }}
         """)
         self._hud_close_btn.clicked.connect(self.close_display)
@@ -8328,7 +8506,7 @@ class MainWindow(QMainWindow):
         self._bar_mem = MetricBar("MEM", C.ACC2)
         self._bar_net = MetricBar("NET", C.GREEN)
         self._bar_gpu = MetricBar("GPU", C.ACC)
-        self._bar_tmp = MetricBar("TMP", "#ff6688")
+        self._bar_tmp = MetricBar("TMP", "#ff4444")
 
         for bar in [self._bar_cpu, self._bar_mem, self._bar_net,
                     self._bar_gpu, self._bar_tmp]:
@@ -8430,7 +8608,7 @@ class MainWindow(QMainWindow):
                 border: 1px solid {C.MUTED_C}; border-radius: 3px;
             }}
             QPushButton:hover {{
-                background: #200010; border: 1px solid #ff6688;
+                background: #180204; border: 1px solid #ff1744;
             }}
             QPushButton:pressed {{
                 background: #300018;
@@ -8730,11 +8908,11 @@ class MainWindow(QMainWindow):
         """
         w = QWidget()
         w.setObjectName("ContentPanel")
-        w.setStyleSheet(f"""
-            QWidget#ContentPanel {{
-                background: {C.PANEL};
-                border-top: 1px solid {C.BORDER_B};
-            }}
+        w.setStyleSheet("""
+            QWidget#ContentPanel {
+                background: transparent;
+                border: none;
+            }
         """)
         w.hide()
 
@@ -8769,12 +8947,12 @@ class MainWindow(QMainWindow):
         dismiss.setCursor(Qt.CursorShape.PointingHandCursor)
         dismiss.setStyleSheet(f"""
             QPushButton {{
-                background: transparent; color: {C.TEXT_DIM};
-                border: 1px solid {C.BORDER}; border-radius: 2px; padding: 0 5px;
+                background: rgba(255, 23, 68, 0.12); color: {C.TEXT_DIM};
+                border: 1px solid rgba(255, 23, 68, 0.35); border-radius: 2px; padding: 0 5px;
             }}
-            QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
+            QPushButton:hover {{ color: #ffffff; background: rgba(255, 23, 68, 0.35); border-color: {C.PRI}; }}
         """)
-        dismiss.clicked.connect(w.hide)
+        dismiss.clicked.connect(lambda: (w.hide(), self.left_search_dock.hide() if hasattr(self, "left_search_dock") and self.left_search_dock else None))
         hdr.addWidget(dismiss)
         lay.addLayout(hdr)
 
@@ -8922,9 +9100,11 @@ class MainWindow(QMainWindow):
         self._content_display.setHtml("".join(parts))
         # setHtml jumps to the top; put the reader back where they were.
         bar.setValue(keep)
-        if not self._content_panel.isVisible():
+        if task_win is None and not self._content_panel.isVisible():
             self.hud.glance(0.0, -0.85, hold=1.3)
             self._content_panel.show()
+            if hasattr(self, "left_search_dock") and self.left_search_dock:
+                self.left_search_dock.popup(title, _time.strftime("%I:%M:%S %p"))
             total = self._center_split.height()
             self._center_split.setSizes([max(total - 260, 120), 260])
 
@@ -9080,12 +9260,12 @@ class MainWindow(QMainWindow):
         quit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         quit_btn.setStyleSheet(f"""
             QPushButton {{
-                background: transparent; color: {C.TEXT_DIM};
-                border: 1px solid {C.BORDER}; border-radius: 2px; padding: 0 5px;
+                background: rgba(255, 23, 68, 0.12); color: {C.TEXT_DIM};
+                border: 1px solid rgba(255, 23, 68, 0.35); border-radius: 2px; padding: 0 5px;
             }}
-            QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
+            QPushButton:hover {{ color: #ffffff; background: rgba(255, 23, 68, 0.35); border-color: {C.PRI}; }}
         """)
-        quit_btn.clicked.connect(self._hide_quiz)
+        quit_btn.clicked.connect(lambda: (self._hide_quiz(), self.left_search_dock.hide() if hasattr(self, "left_search_dock") and self.left_search_dock else None))
         hdr.addWidget(quit_btn)
         lay.addLayout(hdr)
 
@@ -9989,7 +10169,7 @@ class MainWindow(QMainWindow):
                 self._hud_mute_btn.setText("MIC")
                 self._hud_mute_btn.setStyleSheet(f"""
                     QPushButton {{
-                        background: rgba(30, 8, 26, 210);
+                        background: rgba(24, 4, 8, 220);
                         color: {C.TEXT};
                         border: 1px solid {C.BORDER_B};
                         border-radius: 4px; padding: 4px 8px;
@@ -10031,6 +10211,9 @@ class MainWindow(QMainWindow):
     def _apply_state(self, state: str):
         self.hud.state    = state
         self.hud.speaking = (str(state or "").upper() == "SPEAKING")
+        if hasattr(self.hud, "on_state_changed"):
+            self.hud.on_state_changed(state)
+        self.hud.update()
 
     def _check_config(self) -> bool:
         if not API_FILE.exists(): return False

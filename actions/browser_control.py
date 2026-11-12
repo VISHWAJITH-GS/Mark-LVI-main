@@ -770,9 +770,27 @@ class _BrowserSession:
 
     async def _get_page(self) -> Page:
         await self._launch()
-        # If somehow page got closed, open a fresh one
+        # Verify context is alive and pages accessible
+        try:
+            pages = self._context.pages if self._context else []
+        except Exception:
+            self._context = None
+            self._page = None
+            await self._launch()
+            pages = self._context.pages if self._context else []
+
         if self._page is None or self._page.is_closed():
-            self._page = await self._context.new_page()
+            active_pages = [p for p in pages if not p.is_closed()]
+            if active_pages:
+                self._page = active_pages[0]
+            else:
+                try:
+                    self._page = await self._context.new_page()
+                except Exception:
+                    self._context = None
+                    self._page = None
+                    await self._launch()
+                    self._page = await self._adopt_page()
             await asyncio.sleep(0.2)
         return self._page
 
@@ -840,6 +858,20 @@ class _BrowserSession:
     async def click(self, selector: str = None, text: str = None) -> str:
         page = await self._get_page()
         try:
+            # 1. Primary Vimium C keyboard link hints if text target is provided
+            if text:
+                try:
+                    from actions.vimium_c import get_vimium_controller, is_vimium_installed
+                    if is_vimium_installed():
+                        vc = get_vimium_controller()
+                        matched_hint = await vc.find_hint_for_target(page, text, new_tab=False)
+                        if matched_hint:
+                            res = await vc.execute_hint(page, matched_hint)
+                            if res.get("success"):
+                                return f"Clicked via Vimium C hint [{matched_hint.hint_code}]: '{text}'"
+                except Exception as _vc_err:
+                    logger.debug(f"[Browser] Vimium C click attempt error: {_vc_err}")
+
             if text:
                 await page.get_by_text(text, exact=False).first.click(timeout=8_000)
                 return f"Clicked text: '{text}'"
@@ -912,9 +944,22 @@ class _BrowserSession:
                 results.append(f"✗ {selector}: {e}")
         return "Form filled: " + ", ".join(results)
 
-    async def smart_click(self, description: str) -> str:
+    async def smart_click(self, description: str, new_tab: bool = False) -> str:
         page = await self._get_page()
-        # 1. High-confidence semantic match
+        # 1. Primary Vimium C keyboard link hints
+        try:
+            from actions.vimium_c import get_vimium_controller, is_vimium_installed
+            if is_vimium_installed():
+                vc = get_vimium_controller()
+                matched_hint = await vc.find_hint_for_target(page, description, new_tab=new_tab)
+                if matched_hint:
+                    res = await vc.execute_hint(page, matched_hint)
+                    if res.get("success"):
+                        return f"Clicked via Vimium C hint [{matched_hint.hint_code}]: '{description}'"
+        except Exception as e:
+            logger.debug(f"[Browser] Vimium C smart_click attempt error: {e}")
+
+        # 2. High-confidence semantic match fallback
         for role in ("button", "link", "searchbox", "textbox", "menuitem", "tab"):
             try:
                 loc = page.get_by_role(role, name=description)
@@ -923,19 +968,6 @@ class _BrowserSession:
                     return f"Clicked ({role}): '{description}'"
             except Exception:
                 pass
-
-        # 2. Hybrid Vimium C keyboard link hints
-        try:
-            from actions.vimium_c import get_vimium_controller, is_vimium_installed
-            if is_vimium_installed():
-                vc = get_vimium_controller()
-                matched_hint = await vc.find_hint_for_target(page, description, new_tab=False)
-                if matched_hint:
-                    res = await vc.execute_hint(page, matched_hint)
-                    if res.get("verified"):
-                        return f"Clicked via Vimium C hint [{matched_hint.hint_code}]: '{description}'"
-        except Exception as e:
-            logger.debug(f"[Browser] Vimium C smart_click attempt error: {e}")
 
         # 3. Text, placeholder, and attribute locators
         for attempt in (
@@ -1021,9 +1053,11 @@ class _BrowserSession:
         elif cmd in ("gi", "focus_input"):
             return await vc.focus_input(page)
         else:
-            await page.keyboard.press("Escape")
-            await page.keyboard.press(cmd)
-            return f"Executed Vimium C command: '{cmd}'"
+            # Type hint character sequence or raw shortcut
+            for ch in cmd:
+                await page.keyboard.press(ch.lower())
+                await asyncio.sleep(0.08)
+            return f"Executed Vimium C command / typed hint sequence: '{cmd}'"
 
     async def get_hints(self) -> str:
         """Returns a formatted list of all visible Vimium C link hints on the page."""
@@ -1352,7 +1386,8 @@ def browser_control(
         elif action in ("hint_scroll", "vimium_scroll"):
             result = sess.run(sess.hint_scroll(params.get("direction", "down"), int(params.get("amount", 1))))
         elif action == "vimium_command":
-            result = sess.run(sess.vimium_command(params.get("key") or params.get("command", "f")))
+            cmd = params.get("key") or params.get("command") or params.get("text") or "f"
+            result = sess.run(sess.vimium_command(cmd))
         elif action in ("get_hints", "list_hints"):
             result = sess.run(sess.get_hints())
         elif action == "smart_type":

@@ -799,5 +799,86 @@ class TestKeenaHudTransformation(unittest.TestCase):
         self.assertEqual(len(self.win._displays), 0)
         self.assertFalse(self.win._dots_overlay.isVisible())
 
+    def test_24_state_based_colors_and_transitions(self):
+        """Verify state-based color palette (Listening=Red, Speaking=Yellow, Thinking/Processing=Light Blue)."""
+        from ui import (
+            COLOR_STATE_LISTENING,
+            COLOR_STATE_SPEAKING,
+            COLOR_STATE_THINKING,
+            COLOR_STATE_PROCESSING,
+            COLOR_BLUE_PRIMARY,
+            COLOR_BLUE_GLOW,
+            COLOR_BLUE_OUTER,
+            COLOR_BLUE_HIGHLIGHT,
+        )
+
+        hud = self.win.hud
+
+        # 1. Listening -> Red
+        self.win._apply_state("LISTENING")
+        self.assertEqual(hud.state, "LISTENING")
+        hud._step()
+        self.assertEqual(COLOR_STATE_LISTENING.name().lower(), "#ff1744")
+
+        # 2. Speaking -> Yellow
+        self.win._apply_state("SPEAKING")
+        self.assertEqual(hud.state, "SPEAKING")
+        self.assertTrue(hud.speaking)
+        hud._step()
+        self.assertEqual(COLOR_STATE_SPEAKING.name().lower(), "#ffd700")
+
+        # 3. Thinking -> Bright Glowing Light Blue (#38BDF8)
+        self.win._apply_state("THINKING")
+        self.assertEqual(hud.state, "THINKING")
+        self.assertFalse(hud.speaking)
+        hud._step()
+        self.assertEqual(COLOR_STATE_THINKING.name().lower(), "#38bdf8")
+        self.assertEqual(COLOR_BLUE_GLOW.name().lower(), "#7dd3fc")
+        self.assertEqual(COLOR_BLUE_HIGHLIGHT.name().lower(), "#bae6fd")
+
+        # 4. Processing -> Bright Glowing Light Blue (#38BDF8)
+        self.win._apply_state("PROCESSING")
+        self.assertEqual(hud.state, "PROCESSING")
+        hud._step()
+        self.assertEqual(COLOR_STATE_PROCESSING.name().lower(), "#38bdf8")
+
+    def test_25_minimized_state_synchronization(self):
+        """Verify minimized and expanded interfaces reflect identical synchronized states."""
+        hud = self.win.hud
+
+        # Minimize to left edge
+        self.win.toggle_minimize_top()
+        self.assertTrue(self.win._is_minimized_top)
+        self.assertTrue(hud._mini_mode)
+
+        # State updates while minimized immediately synchronize without restoring
+        self.win._apply_state("THINKING")
+        self.assertEqual(hud.state, "THINKING")
+        hud._step()
+        hud.repaint()
+
+        self.win._apply_state("PROCESSING")
+        self.assertEqual(hud.state, "PROCESSING")
+        hud._step()
+        hud.repaint()
+
+        self.win._apply_state("LISTENING")
+        self.assertEqual(hud.state, "LISTENING")
+        hud._step()
+        hud.repaint()
+
+        self.win._apply_state("SPEAKING")
+        self.assertEqual(hud.state, "SPEAKING")
+        self.assertTrue(hud.speaking)
+        hud._step()
+        hud.repaint()
+
+        # Restore and verify state persists
+        self.win.toggle_minimize_top()
+        self.assertFalse(self.win._is_minimized_top)
+        self.assertFalse(hud._mini_mode)
+        self.assertEqual(hud.state, "SPEAKING")
+
+
 if __name__ == "__main__":
     unittest.main()

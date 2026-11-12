@@ -1,0 +1,55 @@
+{
+  "site_url": "http://127.0.0.1:49874/index.html",
+  "framework": "Static HTML/Web Application",
+  "start_time": "2026-11-12T11:05:24.613428",
+  "end_time": "2026-11-12T11:05:46.348916",
+  "total_tests": 3,
+  "passed_tests": 2,
+  "failed_tests": 1,
+  "console_errors": [
+    {
+      "msg_type": "error",
+      "text": "Failed to load resource: the server responded with a status of 404 (File not found)",
+      "location": "{'url': 'http://127.0.0.1:49874/favicon.ico', 'line': 0, 'column': 0, 'lineNumber': 0, 'columnNumber': 0}",
+      "timestamp": 1794461724.7410917
+    }
+  ],
+  "network_errors": [
+    {
+      "url": "http://invalid.domain.that.does.not.exist.test:9999/",
+      "method": "GET",
+      "status": null,
+      "error_text": "net::ERR_NAME_NOT_RESOLVED",
+      "timestamp": 1794461724.470399
+    }
+  ],
+  "results": [
+    {
+      "test_name": "Verify Page Load and Content",
+      "passed": true,
+      "duration_ms": 109.43055152893066,
+      "steps_executed": 3,
+      "error": null,
+      "screenshot_path": "reports\\qa_shot_20261112_110536_1.png",
+      "details": {}
+    },
+    {
+      "test_name": "Navigation Link Functionality",
+      "passed": true,
+      "duration_ms": 1528.0718803405762,
+      "steps_executed": 3,
+      "error": null,
+      "screenshot_path": "reports\\qa_shot_20261112_110536_2.png",
+      "details": {}
+    },
+    {
+      "test_name": "Primary Action Button Click",
+      "passed": false,
+      "duration_ms": 8071.160793304443,
+      "steps_executed": 1,
+      "error": "Locator.click: Timeout 8000ms exceeded.\nCall log:\n  - waiting for locator(\"#primary-action-btn\").first\n",
+      "screenshot_path": "reports\\qa_shot_20261112_110536_3.png",
+      "details": {}
+    }
+  ]
+}

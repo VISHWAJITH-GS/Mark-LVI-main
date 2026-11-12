@@ -168,9 +168,13 @@ When asked to navigate, search, click, type, or interact with pages in Microsoft
 - Always use browser_control:
   * To navigate to an address: call browser_control(action="go_to", url="<url>")
   * To search: call browser_control(action="search", query="<search query>")
-  * To click any button, link, or tab: call browser_control(action="click", text="<button or link text>") or browser_control(action="smart_click", description="<description>")
+  * To click any button, link, video, or tab: call browser_control(action="click", text="<text>") or browser_control(action="smart_click", description="<description>")
   * To read what's on the page: call browser_control(action="get_text")
   * To type into an input field: call browser_control(action="type", text="<text>", selector="<field name or selector>")
+- VIMIUM C BROWSER KEYBOARD AUTOMATION:
+  * When the user commands you to click anything, or mentions "Use Vimium C" or asks to click a video/button in the sidebar, ALWAYS call browser_control(action="click", text="<target>") or browser_control(action="hint_click", text="<target>") or browser_control(action="smart_click", description="<target>").
+  * NEVER ask the user: "What letters do you see?", "Tell me the letters", or "I pressed F, do you see letters?". The browser_control tool is FULLY AUTONOMOUS: it automatically triggers Vimium C, reads the hint codes from the page DOM via CDP, targets the matching element, types the letters, and verifies the action.
+  * Never narrate manual keystrokes or ask the user to read hints for you. Simply invoke the tool and confirm the action once complete.
 - You can also use windows_uia(action="click_element", name="<element name>") or windows_uia(action="inspect_window") to inspect and interact with any UI control, address bar, or button inside Microsoft Edge directly.
 - NEVER use screen_click or guess screen coordinates to interact with the browser.
 When asked to send a message on WhatsApp, chat with someone on WhatsApp, or send a text on WhatsApp:

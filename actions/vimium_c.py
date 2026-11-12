@@ -219,18 +219,30 @@ class VimiumCController:
                 x = int(pos_m.group(1)) if pos_m else 0
                 y = int(pos_m.group(2)) if pos_m else 0
 
-                # Query underlying DOM element at (x, y)
+                # Query underlying DOM element at (x, y) including parent video/article cards
                 el_info = await page.evaluate(f"""() => {{
                     let el = document.elementFromPoint({x}, {y});
                     if (!el) return {{}};
-                    let a = el.closest('a') || el.closest('button') || el;
+                    let a = el.closest('a') || el.closest('button') || el.closest('[role="button"]') || el.closest('[role="link"]') || el;
+                    let card = el.closest('ytd-compact-video-renderer, ytd-rich-item-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-playlist-video-renderer, article, li, tr, [role="row"], [role="listitem"], .video-card, div#dismissible');
+                    let cardTitle = '';
+                    let cardText = '';
+                    if (card) {{
+                        let tEl = card.querySelector('#video-title, #title, [id*="title"], h1, h2, h3, h4, h5, a[title]');
+                        if (tEl) {{
+                            cardTitle = (tEl.getAttribute('title') || tEl.getAttribute('aria-label') || tEl.innerText || tEl.textContent || '').trim();
+                        }}
+                        cardText = (card.innerText || card.textContent || '').trim().slice(0, 200);
+                    }}
+                    let elText = (a.innerText || a.textContent || '').trim().slice(0, 120);
+                    let fullText = [elText, cardTitle, cardText].filter(Boolean).join(' ');
                     return {{
                         tag: a.tagName || '',
-                        text: (a.innerText || a.textContent || '').trim().slice(0, 120),
-                        href: a.getAttribute('href') || '',
+                        text: fullText.slice(0, 250),
+                        href: a.getAttribute('href') || (card && card.querySelector('a') ? card.querySelector('a').getAttribute('href') : '') || '',
                         role: a.getAttribute('role') || '',
-                        aria: a.getAttribute('aria-label') || '',
-                        title: a.getAttribute('title') || '',
+                        aria: (a.getAttribute('aria-label') || cardTitle).slice(0, 150),
+                        title: (a.getAttribute('title') || cardTitle).slice(0, 150),
                         placeholder: a.getAttribute('placeholder') || ''
                     }};
                 }}""")
@@ -257,21 +269,34 @@ class VimiumCController:
     def match_hint(self, target_query: str, hints: List[VimiumHint]) -> Optional[VimiumHint]:
         """
         Matches a target query against a list of hints using:
-          0. Direct hint code match (e.g. 'A', 'JK', 'SA').
-          1. Exact or substring match on text, aria-label, title, placeholder, or href.
-          2. Keyword token intersection.
+          0. Direct hint code match (e.g. 'A', 'JK', 'GP').
+          1. Quoted terms extraction (e.g. 'PLACEMENTS' or 'Putaapu Gang Song').
+          2. Exact or substring match on text, aria-label, title, placeholder, or href.
+          3. Distinctive keyword token matching (ignoring conversational stopwords).
         """
         if not target_query or not hints:
             return None
 
-        q_lower = target_query.lower().strip()
+        q_clean = target_query.strip()
+        q_lower = q_clean.lower()
 
         # ── Pass 0: Direct hint code match ───────────────────────────────────
         for h in hints:
             if h.hint_code.lower() == q_lower:
                 return h
 
-        # ── Pass 1: Exact or substring match ─────────────────────────────────
+        # ── Pass 1: Quoted term extraction ───────────────────────────────────
+        # When target_query is e.g. "Click the 'PLACEMENTS' project folder..."
+        quoted = re.findall(r"['\"]([^'\"]+)['\"]", target_query)
+        for q_term in quoted:
+            term_lower = q_term.lower().strip()
+            if len(term_lower) >= 2:
+                for h in hints:
+                    haystack = f"{h.element_text} {h.aria_label} {h.title} {h.placeholder} {h.href}".lower()
+                    if term_lower in haystack or haystack in term_lower:
+                        return h
+
+        # ── Pass 2: Exact or substring match ─────────────────────────────────
         for h in hints:
             for field_val in (h.element_text, h.aria_label, h.title, h.placeholder):
                 fv = field_val.lower().strip()
@@ -283,19 +308,34 @@ class VimiumCController:
             if h.href and q_lower in h.href.lower():
                 return h
 
-        # ── Pass 2: Token intersection ───────────────────────────────────────
-        q_tokens = set(re.findall(r"\w+", q_lower))
+        # ── Pass 3: Distinctive keyword token matching ───────────────────────
+        STOP_WORDS = {
+            "click", "the", "button", "link", "item", "folder", "in", "on", "sidebar",
+            "it", "is", "below", "above", "pinned", "please", "video", "song", "tab",
+            "to", "and", "or", "a", "an", "at", "by", "for", "from", "of", "with",
+            "can", "you", "see", "side", "put", "up"
+        }
+        all_tokens = set(re.findall(r"\w+", q_lower))
+        distinct_tokens = [tok for tok in all_tokens if tok not in STOP_WORDS and len(tok) >= 3]
+        if not distinct_tokens:
+            distinct_tokens = [tok for tok in all_tokens if len(tok) >= 3]
+
         best_hint = None
         best_score = 0
         for h in hints:
             haystack = f"{h.element_text} {h.aria_label} {h.title} {h.placeholder} {h.role} {h.href}".lower()
             h_tokens = set(re.findall(r"\w+", haystack))
-            common = q_tokens & h_tokens
-            if len(common) > best_score:
-                best_score = len(common)
+            score = 0
+            for tok in distinct_tokens:
+                if tok in h_tokens:
+                    score += len(tok) * 2  # exact token hit
+                elif any(tok in ht for ht in h_tokens if len(ht) >= 3):
+                    score += len(tok)      # partial token hit (e.g. 'putaapu' vs 'put')
+            if score > best_score:
+                best_score = score
                 best_hint = h
 
-        if best_hint and best_score >= max(1, len(q_tokens) // 2):
+        if best_hint and best_score >= 4:
             return best_hint
 
         return None
