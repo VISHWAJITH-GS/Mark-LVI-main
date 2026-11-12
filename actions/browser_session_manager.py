@@ -225,6 +225,19 @@ class BrowserSessionManager:
             "--start-maximized",
         ]
 
+        if not headless and engine == "chromium":
+            try:
+                from actions.vimium_c import get_vimium_extension_path
+                vc_ext = get_vimium_extension_path()
+                if vc_ext:
+                    launch_args.extend([
+                        f"--disable-extensions-except={vc_ext}",
+                        f"--load-extension={vc_ext}",
+                    ])
+                    logger.info("Vimium C extension configured for session: %s", vc_ext)
+            except Exception as _vc_err:
+                logger.debug("Vimium C extension not loaded into browser session: %s", _vc_err)
+
         kwargs: dict = {
             "headless": headless,
             "viewport": None,

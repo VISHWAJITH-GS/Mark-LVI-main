@@ -74,30 +74,83 @@ def display_window(parameters: dict = None, player=None, session_memory=None) ->
     params = parameters or {}
     action = (params.get("action") or "show_image").strip().lower()
     source = (params.get("path_or_url") or params.get("source") or params.get("text") or params.get("content") or "").strip()
-    display_id = params.get("display_id")
+    raw_display_id = params.get("display_id")
     title = (params.get("title") or "").strip()
 
     if player is None:
         return "Sir, no desktop display manager is currently available."
 
+    # Parse display_id and check for "all" / "every" keyword
+    all_requested = False
+    display_id = None
+    if isinstance(raw_display_id, str):
+        if re.search(r"\b(?:all|every|both)\b", raw_display_id, re.I):
+            all_requested = True
+        else:
+            m = re.search(r"\b(\d+)\b", raw_display_id)
+            if m:
+                display_id = int(m.group(1))
+    elif isinstance(raw_display_id, (int, float)):
+        if int(raw_display_id) == 0:
+            all_requested = True
+        else:
+            display_id = int(raw_display_id)
+
+    if not all_requested and display_id is None:
+        for text in (source, title, action):
+            if re.search(r"\b(?:all|every)\s*(?:displays?|windows?)\b", str(text), re.I):
+                all_requested = True
+                break
+            m = re.search(r"\b(?:display\s*)(\d+)\b", str(text), re.I)
+            if m:
+                display_id = int(m.group(1))
+                break
+
+    target_id = 0 if all_requested else (int(display_id) if display_id is not None else 0)
+
     # ── Focus display ────────────────────────────────────────────────────────
-    if action in ("focus", "focus_display", "center"):
-        if display_id is None:
-            for text in (source, title):
-                m = re.search(r"\b(?:display\s*)?(\d+)\b", str(text), re.I)
-                if m:
-                    display_id = int(m.group(1))
-                    break
-        if display_id is None:
-            return "Please specify which display to bring to the center, sir."
-        ok = player.focus_display(int(display_id))
+    if action in ("focus", "focus_display", "center", "bring_to_front", "restore"):
+        open_displays = player.get_open_displays()
+        if not open_displays:
+            return "Sir, there are no active display windows to focus."
+        if display_id is None and not all_requested:
+            target_id = max(d["display_id"] for d in open_displays)
+        ok = player.focus_display(target_id)
         if ok:
-            return f"Display {display_id} is now front and center, sir."
-        return f"Sir, I could not find Display {display_id}."
+            return f"Display {target_id} is now front and center, sir." if target_id else "Displays have been brought to focus, sir."
+        return f"Sir, I could not find Display {target_id}."
+
+    # ── Maximize display ─────────────────────────────────────────────────────
+    if action in ("maximize", "maximize_display", "maximize_displays", "fullscreen", "expand"):
+        open_displays = player.get_open_displays()
+        if not open_displays:
+            return "Sir, there are no active display windows to maximize."
+        if display_id is None and not all_requested:
+            target_id = open_displays[-1]["display_id"] if len(open_displays) == 1 else 0
+        player.maximize_display_window(target_id)
+        if target_id == 0:
+            return "Maximized all display windows, sir."
+        return f"Maximized Display {target_id}, sir."
+
+    # ── Minimize display ─────────────────────────────────────────────────────
+    if action in ("minimize", "minimize_display", "minimize_displays", "dock", "collapse"):
+        open_displays = player.get_open_displays()
+        if not open_displays:
+            return "Sir, there are no active display windows to minimize."
+        if display_id is None and not all_requested:
+            target_id = open_displays[-1]["display_id"] if len(open_displays) == 1 else 0
+        player.minimize_display_window(target_id)
+        if target_id == 0:
+            return "Minimized all display windows to the left dock, sir."
+        return f"Minimized Display {target_id} to the left dock, sir."
 
     # ── Close display ────────────────────────────────────────────────────────
-    if action in ("close", "close_display", "hide"):
-        target_id = int(display_id) if display_id is not None else 0
+    if action in ("close", "close_display", "close_displays", "hide", "dismiss"):
+        open_displays = player.get_open_displays()
+        if not open_displays:
+            return "Sir, there are no active display windows to close."
+        if display_id is None and not all_requested:
+            target_id = open_displays[-1]["display_id"] if len(open_displays) == 1 else 0
         player.close_display_window(target_id)
         if target_id == 0:
             return "Closed all extra display windows, sir."
@@ -111,15 +164,28 @@ def display_window(parameters: dict = None, player=None, session_memory=None) ->
         summary = ", ".join(f"{d['name']} ({d['title']})" for d in displays)
         return f"Open displays: {summary}."
 
-    # ── Show image, video, or text ───────────────────────────────────────────
-    if action in ("show_text", "text", "display_text") or (params.get("text") and action not in ("show_image", "show_video")):
+    # ── Show image, video, text, or task plan/progress ───────────────────────
+    if action in ("show_task", "task", "show_progress", "progress", "show_plan", "plan"):
+        content_type = "task"
+        if not isinstance(source, dict):
+            source = {
+                "folder": title or "TASK_PLAN",
+                "request": source or params.get("text", "") or "Task execution plan and progress",
+                "status": "planning",
+                "phases": ["planning", "writing", "executing", "verifying", "done"],
+                "steps": [(0.0, "Initiating task plan and environment...")],
+                "files": {}
+            }
+        if not title:
+            title = f"Task: {source.get('folder', 'Progress')}"
+    elif action in ("show_text", "text", "display_text") or (params.get("text") and action not in ("show_image", "show_video")):
         content_type = "text"
-    elif action == "show_video" or source.lower().endswith((".mp4", ".mkv", ".webm", ".avi", ".mov", ".flv")):
+    elif action == "show_video" or (isinstance(source, str) and source.lower().endswith((".mp4", ".mkv", ".webm", ".avi", ".mov", ".flv"))):
         content_type = "video"
     else:
         content_type = "image"
 
-    if not source:
+    if not source and content_type != "task":
         curr_file = getattr(player, "current_file", None)
         if curr_file and os.path.exists(curr_file):
             source = curr_file
@@ -128,12 +194,12 @@ def display_window(parameters: dict = None, player=None, session_memory=None) ->
 
     if not title:
         if content_type == "text":
-            title = Path(source).name if os.path.exists(source) else "Document"
+            title = Path(source).name if (isinstance(source, str) and os.path.exists(source)) else "Document"
         else:
-            title = Path(source).name if os.path.exists(source) else f"{content_type.capitalize()} Media"
+            title = Path(source).name if (isinstance(source, str) and os.path.exists(source)) else f"{content_type.capitalize()} Media"
 
     # For images, pre-resolve source if URL is broken or needs search
-    if content_type == "image":
+    if content_type == "image" and isinstance(source, str):
         source = _resolve_image_source(source, title)
 
     disp_id = player.open_display(content_type, source, title)
@@ -143,18 +209,21 @@ def display_window(parameters: dict = None, player=None, session_memory=None) ->
 TOOL = {
     "name": "display_window",
     "description": (
-        "Controls multi-display floating windows for images, videos, and texts. "
-        "Call this to show images, videos, or texts/articles/stories/code in a new named display window (e.g. Display 1, Display 2), "
-        "or to focus and bring a specific display window to the front in the center of the screen "
-        "(e.g. 'focus display 2'), list open displays, or close a display."
+        "Controls multi-display floating windows for images, videos, texts, and task planning/progress. "
+        "Call this to show images, videos, texts/articles/stories/code, or task plans & execution progress with action controls "
+        "in a new named display window (e.g. Display 1, Display 2), "
+        "or to focus a display to the center ('focus display 2'), "
+        "maximize a display or all displays ('maximize display 1', 'maximize all displays'), "
+        "minimize a display or all displays to the left edge dock ('minimize display 2', 'minimize all displays'), "
+        "close a display or close all displays ('close display 1', 'close all displays'), or list active displays."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "The display action: 'show_image', 'show_video', 'show_text', 'focus', 'close', or 'list'",
-                "enum": ["show_image", "show_video", "show_text", "focus", "close", "list"]
+                "description": "The display action: 'show_image', 'show_video', 'show_text', 'show_task', 'show_plan', 'focus', 'maximize', 'minimize', 'close', or 'list'",
+                "enum": ["show_image", "show_video", "show_text", "show_task", "show_plan", "focus", "maximize", "minimize", "close", "list"]
             },
             "path_or_url": {
                 "type": "STRING",
@@ -166,7 +235,7 @@ TOOL = {
             },
             "display_id": {
                 "type": "INTEGER",
-                "description": "The display number to focus or close (e.g. 2 for Display 2)"
+                "description": "The display number to focus, maximize, minimize, or close (e.g. 2 for Display 2; 0 or omit for all displays)"
             },
             "title": {
                 "type": "STRING",

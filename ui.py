@@ -94,27 +94,27 @@ _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
 
 class C:
-    BG        = "#0a030a"
-    PANEL     = "#120510"
-    PANEL2    = "#180716"
-    BORDER    = "#3d1130"
-    BORDER_B  = "#7a1a5c"
-    BORDER_A  = "#5c1345"
-    PRI       = "#ff4da6"
-    PRI_DIM   = "#991f63"
-    PRI_GHO   = "#2e001a"
-    ACC       = "#ba55ff"
-    ACC2      = "#ff77c2"
+    BG        = "#0a0203"
+    PANEL     = "#130305"
+    PANEL2    = "#1a0508"
+    BORDER    = "#420c12"
+    BORDER_B  = "#8a1520"
+    BORDER_A  = "#661019"
+    PRI       = "#ff1744"
+    PRI_DIM   = "#990e28"
+    PRI_GHO   = "#2e040a"
+    ACC       = "#ff5252"
+    ACC2      = "#ff7597"
     GREEN     = "#00ffaa"
     GREEN_D   = "#00aa66"
-    RED       = "#ff3366"
-    MUTED_C   = "#ff3366"
-    TEXT      = "#ffecf7"
-    TEXT_DIM  = "#d6a0be"
-    TEXT_MED  = "#f0b8d8"
+    RED       = "#ff1744"
+    MUTED_C   = "#ff4444"
+    TEXT      = "#ffeded"
+    TEXT_DIM  = "#d69da4"
+    TEXT_MED  = "#f0b8bd"
     WHITE     = "#ffffff"
-    DARK      = "#0a030a"
-    BAR_BG    = "#180414"
+    DARK      = "#0a0203"
+    BAR_BG    = "#180406"
 
 
 # Keys tied to the accent colour — status colours (ACC, GREEN, RED…) stay fixed
@@ -468,7 +468,7 @@ class HudConversationWidget(QTextEdit):
                 color: {C.TEXT};
                 border: none;
                 padding: 10px 4px;
-                selection-background-color: rgba(255, 77, 166, 0.35);
+                selection-background-color: rgba(255, 23, 68, 0.35);
             }}
             QScrollBar:vertical {{
                 width: 0px;
@@ -897,15 +897,15 @@ class HudCanvas(QWidget):
             glow_col = QColor(255, 215, 0)
         elif st in ("ERROR", "INTERRUPTED"):
             accent = ALERT_COL
-            core_mid = QColor(255, 214, 236, 240)
+            core_mid = QColor(255, 220, 225, 240)
             glow_col = ALERT_COL
         elif st in ("THINKING", "PROCESSING"):
             accent = DEEP_ACC
-            core_mid = QColor(255, 214, 236, 240)
+            core_mid = QColor(255, 220, 225, 240)
             glow_col = DEEP_ACC
         else:
             accent = CYAN_ACC
-            core_mid = QColor(255, 214, 236, 240)
+            core_mid = QColor(255, 225, 230, 245)
             glow_col = CYAN_ACC
 
         boot = 1.0
@@ -4286,16 +4286,22 @@ class ClipboardPanel(QWidget):
     """Floating panel shown when text is copied — offers quick Jarvis actions."""
 
     action_requested = pyqtSignal(str)
-    _W, _H = 326, 112
+    _W, _H = 340, 114
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setWindowFlags(
+            Qt.WindowType.Tool |
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"""
             ClipboardPanel {{
-                background: rgba(0, 8, 14, 248);
-                border: 1px solid {C.BORDER_B};
-                border-radius: 6px;
+                background: rgba(14, 4, 18, 248);
+                border: 1px solid {C.PRI};
+                border-radius: 8px;
             }}
         """)
         self.setFixedWidth(self._W)
@@ -4364,7 +4370,9 @@ class ClipboardPanel(QWidget):
         if len(text) > 58:
             preview += "…"
         self._preview.setText(f'"{preview}"')
-        self.show(); self.raise_()
+        self.show()
+        self.raise_()
+        self.activateWindow()
         self._dismiss_timer.start(8000)
 
 
@@ -4951,13 +4959,13 @@ class BottomChatDock(QWidget):
         self._min_btn.setToolTip("Minimize/Restore log view")
         self._min_btn.setStyleSheet(f"""
             QPushButton {{
-                background: rgba(255, 77, 166, 0.15);
+                background: rgba(255, 23, 68, 0.15);
                 color: {C.TEXT};
                 border: 1px solid {C.BORDER};
                 border-radius: 3px;
             }}
             QPushButton:hover {{
-                background: rgba(255, 77, 166, 0.35);
+                background: rgba(255, 23, 68, 0.35);
                 border-color: {C.PRI};
             }}
         """)
@@ -5047,13 +5055,13 @@ class BottomChatDock(QWidget):
         self._send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._send_btn.setStyleSheet(f"""
             QPushButton {{
-                background: rgba(255, 77, 166, 0.25);
+                background: rgba(255, 23, 68, 0.25);
                 color: #ffffff;
                 border: 1px solid {C.PRI};
                 border-radius: 4px;
             }}
             QPushButton:hover {{
-                background: rgba(255, 77, 166, 0.45);
+                background: rgba(255, 23, 68, 0.45);
             }}
         """)
         self._send_btn.clicked.connect(self._on_dock_send)
@@ -5166,14 +5174,14 @@ class LeftSearchDock(QWidget):
         dismiss.setCursor(Qt.CursorShape.PointingHandCursor)
         dismiss.setStyleSheet(f"""
             QPushButton {{
-                background: rgba(255, 77, 166, 0.15);
+                background: rgba(255, 23, 68, 0.15);
                 color: {C.TEXT};
                 border: 1px solid {C.BORDER};
                 border-radius: 3px;
                 padding: 0 8px;
             }}
             QPushButton:hover {{
-                background: rgba(255, 77, 166, 0.35);
+                background: rgba(255, 23, 68, 0.35);
                 border-color: {C.PRI};
                 color: #ffffff;
             }}
@@ -5261,7 +5269,7 @@ class ArmouryCrateTelemetryWidget(QWidget):
             c.setStyleSheet(f"""
                 QFrame {{
                     background: rgba(18, 5, 18, 225);
-                    border: 1px solid rgba(255, 77, 166, 0.28);
+                    border: 1px solid rgba(255, 23, 68, 0.28);
                     border-radius: 5px;
                 }}
             """)
@@ -5340,7 +5348,7 @@ class ArmouryCrateTelemetryWidget(QWidget):
         c_gpu, v_gpu = _make_card("GPU")
         r_gf, self.lbl_gpu_freq = _make_row("Frequency")
         r_gu, self.lbl_gpu_usage = _make_row("Usage")
-        self.bar_gpu = _make_bar("#ff4da6")
+        self.bar_gpu = _make_bar("#ff1744")
         r_gm, self.lbl_gpu_mem_freq = _make_row("Memory Frequency")
         r_gt, self.lbl_gpu_temp = _make_row("Temperature")
         r_gv, self.lbl_gpu_volt = _make_row("Voltage")
@@ -5371,7 +5379,7 @@ class ArmouryCrateTelemetryWidget(QWidget):
         r_ms, self.lbl_storage = _make_row("Storage")
         self.bar_storage = _make_bar("#00e5ff")
         r_mr, self.lbl_ram = _make_row("RAM")
-        self.bar_ram = _make_bar("#ff4da6")
+        self.bar_ram = _make_bar("#ff1744")
         r_mn, self.lbl_net = _make_row("Network I/O")
         v_mem.addLayout(r_ms)
         v_mem.addWidget(self.bar_storage)
@@ -5430,7 +5438,7 @@ class ArmouryCrateTelemetryWidget(QWidget):
                     QPushButton {
                         background: rgba(22, 6, 22, 0.65);
                         color: #d6a0be;
-                        border: 1px solid rgba(255, 77, 166, 0.22);
+                        border: 1px solid rgba(255, 23, 68, 0.22);
                         border-radius: 4px;
                         padding: 4px 8px;
                     }
@@ -5569,10 +5577,10 @@ class MinimizedDisplayPill(QPushButton):
             self.setStyleSheet(f"""
                 QPushButton {{
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 rgba(40, 10, 35, 250), stop:1.0 rgba(14, 4, 12, 240));
+                        stop:0 rgba(48, 8, 14, 252), stop:1.0 rgba(16, 3, 5, 245));
                     color: #ffffff;
-                    border: 1.5px solid #ffd700;
-                    border-left: 3px solid #ffd700;
+                    border: 1.5px solid #ff2b47;
+                    border-left: 4px solid #ff1744;
                     border-top-right-radius: 6px;
                     border-bottom-right-radius: 6px;
                     border-top-left-radius: 0px;
@@ -5587,10 +5595,10 @@ class MinimizedDisplayPill(QPushButton):
         else:
             self.setStyleSheet(f"""
                 QPushButton {{
-                    background: rgba(18, 5, 16, 235);
-                    color: {C.PRI};
-                    border: 1.5px solid {C.PRI};
-                    border-left: 3px solid {C.PRI};
+                    background: rgba(20, 4, 7, 240);
+                    color: #ff3b56;
+                    border: 1px solid rgba(255, 23, 68, 0.45);
+                    border-left: 3.5px solid #ff1744;
                     border-top-right-radius: 6px;
                     border-bottom-right-radius: 6px;
                     border-top-left-radius: 0px;
@@ -5684,19 +5692,26 @@ class JarvisDisplayWindow(QWidget):
     minimized_requested = pyqtSignal(int)
     _img_data_sig = pyqtSignal(bytes)
 
-    def __init__(self, display_id: int, name: str, content_type: str, source: str, title: str = "", parent=None):
+    def __init__(self, display_id: int, name: str, content_type: str, source, title: str = "", parent=None):
         super().__init__(parent)
         self.display_id = display_id
         self.display_name = name
         self.content_type = (content_type or "image").lower()
-        self.source = source or ""
-        self.title_text = title or (Path(source).name if (source and os.path.exists(source)) else (source[:36] if source else "MEDIA"))
+        if isinstance(source, dict):
+            self._task_data = source
+            self.source = str(source.get("path") or source.get("folder") or "")
+            self.title_text = title or f"TASK: {source.get('folder') or 'PROGRESS'}"
+        else:
+            self.source = str(source or "")
+            self.title_text = title or (Path(self.source).name if (self.source and os.path.exists(self.source)) else (self.source[:36] if self.source else "MEDIA"))
 
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.SubWindow)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.resize(680, 500)
         self.setMinimumSize(320, 240)
         self._drag_start = None
+        self._normal_geom = None
+        self._is_maximized_disp = False
 
         self._outer = QWidget(self)
         self._outer.setObjectName("DisplayOuter")
@@ -5745,6 +5760,25 @@ class JarvisDisplayWindow(QWidget):
         self._min_btn.clicked.connect(self._on_min_btn_clicked)
         hdr.addWidget(self._min_btn)
 
+        self._max_btn = QPushButton("MAX")
+        self._max_btn.setFont(keena_font(7, bold=True))
+        self._max_btn.setFixedSize(32, 20)
+        self._max_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._max_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(30, 8, 26, 210);
+                color: {C.TEXT_DIM};
+                border: 1px solid {C.BORDER};
+                border-radius: 3px;
+            }}
+            QPushButton:hover {{
+                border-color: {C.PRI};
+                color: #ffffff;
+            }}
+        """)
+        self._max_btn.clicked.connect(self.maximize_window)
+        hdr.addWidget(self._max_btn)
+
         close_btn = QPushButton("X")
         close_btn.setFont(keena_font(8, bold=True))
         close_btn.setFixedSize(22, 20)
@@ -5775,10 +5809,346 @@ class JarvisDisplayWindow(QWidget):
             self._setup_video(cont_lay)
         elif self.content_type == "text":
             self._setup_text(cont_lay)
+        elif self.content_type in ("task", "progress", "plan"):
+            self._setup_task(cont_lay)
         else:
             self._setup_image(cont_lay)
 
         v.addWidget(self._content_cont, stretch=1)
+
+    def _setup_task(self, lay: QVBoxLayout):
+        self.resize(720, 560)
+        self.setMinimumSize(480, 360)
+
+        # ── 1. Goal / Overview Card ──────────────────────────────────────────
+        self._goal_box = QWidget()
+        self._goal_box.setStyleSheet(f"""
+            QWidget {{
+                background: rgba(22, 6, 20, 235);
+                border: 1px solid rgba(255, 23, 68, 0.35);
+                border-radius: 6px;
+            }}
+        """)
+        g_lay = QVBoxLayout(self._goal_box)
+        g_lay.setContentsMargins(10, 8, 10, 8)
+        g_lay.setSpacing(4)
+
+        self._lbl_goal_title = QLabel("◈ TASK OBJECTIVE & ROADMAP")
+        self._lbl_goal_title.setFont(keena_font(9, bold=True))
+        self._lbl_goal_title.setStyleSheet(f"color: {C.PRI}; background: transparent; border: none;")
+        g_lay.addWidget(self._lbl_goal_title)
+
+        self._lbl_goal_req = QLabel()
+        self._lbl_goal_req.setFont(QFont("Courier New", 9))
+        self._lbl_goal_req.setWordWrap(True)
+        self._lbl_goal_req.setStyleSheet(f"color: {C.TEXT}; background: transparent; border: none;")
+        g_lay.addWidget(self._lbl_goal_req)
+
+        self._lbl_goal_meta = QLabel()
+        self._lbl_goal_meta.setFont(keena_font(8, bold=True))
+        self._lbl_goal_meta.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; border: none;")
+        g_lay.addWidget(self._lbl_goal_meta)
+
+        lay.addWidget(self._goal_box)
+
+        # ── 2. Phase Flow & Progress Bar ─────────────────────────────────────
+        self._phase_box = QWidget()
+        self._phase_box.setStyleSheet("background: transparent; border: none;")
+        p_lay = QVBoxLayout(self._phase_box)
+        p_lay.setContentsMargins(4, 2, 4, 2)
+        p_lay.setSpacing(4)
+
+        self._lbl_phases = QLabel()
+        self._lbl_phases.setFont(keena_font(8, bold=True))
+        self._lbl_phases.setStyleSheet("background: transparent; border: none;")
+        p_lay.addWidget(self._lbl_phases)
+
+        self._task_pbar = QProgressBar()
+        self._task_pbar.setFixedHeight(12)
+        self._task_pbar.setRange(0, 100)
+        self._task_pbar.setValue(0)
+        self._task_pbar.setStyleSheet(f"""
+            QProgressBar {{
+                background: rgba(20, 5, 20, 220);
+                border: 1px solid rgba(255, 23, 68, 0.4);
+                border-radius: 6px;
+                text-align: center;
+                color: #ffffff;
+                font-family: 'Courier New';
+                font-size: 9px;
+                font-weight: bold;
+            }}
+            QProgressBar::chunk {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {C.PRI}, stop:1.0 #ff5252);
+                border-radius: 5px;
+            }}
+        """)
+        p_lay.addWidget(self._task_pbar)
+        lay.addWidget(self._phase_box)
+
+        # ── 3. Split: Files on top, Live Logs on bottom ───────────────────────
+        self._files_lbl = QLabel("◈ FILES GENERATED & MODIFIED")
+        self._files_lbl.setFont(keena_font(8, bold=True))
+        self._files_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; border: none; margin-top: 2px;")
+        lay.addWidget(self._files_lbl)
+
+        self._task_files_edit = QTextEdit()
+        self._task_files_edit.setReadOnly(True)
+        self._task_files_edit.setFixedHeight(95)
+        self._task_files_edit.setFrameShape(QFrame.Shape.NoFrame)
+        self._task_files_edit.setStyleSheet(f"""
+            QTextEdit {{
+                background: rgba(12, 3, 12, 220);
+                color: {C.TEXT};
+                border: 1px solid rgba(255, 23, 68, 0.25);
+                border-radius: 4px;
+                padding: 6px;
+                font-family: 'Courier New';
+                font-size: 9px;
+            }}
+            QScrollBar:vertical {{
+                width: 5px;
+                background: transparent;
+            }}
+            QScrollBar::handle:vertical {{
+                background: rgba(255, 23, 68, 0.4);
+                border-radius: 2px;
+            }}
+        """)
+        lay.addWidget(self._task_files_edit)
+
+        self._logs_lbl = QLabel("◈ LIVE EXECUTION CONSOLE & STEPS")
+        self._logs_lbl.setFont(keena_font(8, bold=True))
+        self._logs_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent; border: none; margin-top: 2px;")
+        lay.addWidget(self._logs_lbl)
+
+        self._task_log_edit = QTextEdit()
+        self._task_log_edit.setReadOnly(True)
+        self._task_log_edit.setFrameShape(QFrame.Shape.NoFrame)
+        self._task_log_edit.setStyleSheet(f"""
+            QTextEdit {{
+                background: rgba(6, 1, 6, 240);
+                color: {C.TEXT};
+                border: 1px solid rgba(255, 23, 68, 0.3);
+                border-radius: 4px;
+                padding: 6px;
+                font-family: 'Courier New';
+                font-size: 9px;
+            }}
+            QScrollBar:vertical {{
+                width: 5px;
+                background: transparent;
+            }}
+            QScrollBar::handle:vertical {{
+                background: rgba(255, 23, 68, 0.4);
+                border-radius: 2px;
+            }}
+        """)
+        lay.addWidget(self._task_log_edit, stretch=1)
+
+        # ── 4. Task Action Bar ────────────────────────────────────────────────
+        act_bar = QHBoxLayout()
+        act_bar.setContentsMargins(0, 4, 0, 0)
+        act_bar.setSpacing(8)
+
+        def _act_btn(txt, tip):
+            b = QPushButton(txt)
+            b.setFont(keena_font(8, bold=True))
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setToolTip(tip)
+            b.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(28, 7, 24, 220);
+                    color: {C.TEXT};
+                    border: 1px solid {C.PRI};
+                    border-radius: 4px;
+                    padding: 5px 10px;
+                }}
+                QPushButton:hover {{
+                    background: rgba(255, 23, 68, 0.3);
+                    border-color: #ff1744;
+                    color: #ffffff;
+                }}
+                QPushButton:pressed {{
+                    background: rgba(255, 23, 68, 0.5);
+                }}
+            """)
+            return b
+
+        self._btn_open_folder = _act_btn("📂 OPEN FOLDER", "Open project directory in Windows Explorer")
+        self._btn_open_folder.clicked.connect(self._on_action_open_folder)
+        act_bar.addWidget(self._btn_open_folder)
+
+        self._btn_run_project = _act_btn("▶ RUN PROJECT", "Run the project entry script and view execution output")
+        self._btn_run_project.clicked.connect(self._on_action_run_project)
+        act_bar.addWidget(self._btn_run_project)
+
+        self._btn_copy_plan = _act_btn("📋 COPY PLAN", "Copy plan and task summary to clipboard")
+        self._btn_copy_plan.clicked.connect(self._on_action_copy_plan)
+        act_bar.addWidget(self._btn_copy_plan)
+
+        act_bar.addStretch()
+
+        self._btn_stop_task = _act_btn("⏹ STOP TASK", "Halt running task")
+        self._btn_stop_task.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(45, 10, 20, 220);
+                color: #ff6688;
+                border: 1px solid rgba(255, 102, 136, 0.5);
+                border-radius: 4px;
+                padding: 5px 10px;
+            }}
+            QPushButton:hover {{
+                background: rgba(255, 51, 102, 0.4);
+                border-color: #ff3366;
+                color: #ffffff;
+            }}
+        """)
+        self._btn_stop_task.clicked.connect(self._on_action_stop_task)
+        act_bar.addWidget(self._btn_stop_task)
+
+        lay.addLayout(act_bar)
+
+        if hasattr(self, "_task_data") and self._task_data:
+            self.update_task_data(self._task_data)
+
+    def _on_action_open_folder(self):
+        import subprocess
+        path = getattr(self, "_task_path", "")
+        if not path and hasattr(self, "_task_data") and isinstance(self._task_data, dict):
+            path = self._task_data.get("path") or self._task_data.get("folder") or ""
+        if path and os.path.exists(path):
+            try:
+                subprocess.Popen(f'explorer "{os.path.abspath(path)}"')
+            except Exception as ex:
+                self._task_log_edit.append(f"[Explorer Error] {ex}")
+        else:
+            dt = os.path.join(os.path.expanduser("~"), "Desktop")
+            subprocess.Popen(f'explorer "{os.path.abspath(dt)}"')
+
+    def _on_action_run_project(self):
+        path = getattr(self, "_task_path", "")
+        if not path and hasattr(self, "_task_data") and isinstance(self._task_data, dict):
+            path = self._task_data.get("path") or ""
+        if not path or not os.path.exists(path):
+            self._task_log_edit.append("[Run Error] Project path not found or not yet created.")
+            return
+
+        def _worker():
+            import subprocess, sys
+            entry = os.path.join(path, "main.py")
+            cmd = [sys.executable, entry] if os.path.exists(entry) else [sys.executable, "-m", "unittest"]
+            self._task_log_edit.append(f"\n▶ Running: {' '.join(cmd)}\n")
+            try:
+                p = subprocess.Popen(cmd, cwd=path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                for line in p.stdout:
+                    self._task_log_edit.append(line.rstrip())
+                p.wait()
+                self._task_log_edit.append(f"\n[Process exited with code {p.returncode}]\n")
+            except Exception as e:
+                self._task_log_edit.append(f"[Run Project Failed] {e}\n")
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_action_copy_plan(self):
+        txt_parts = []
+        if hasattr(self, "_lbl_goal_req"):
+            txt_parts.append(f"TASK OBJECTIVE:\n{self._lbl_goal_req.text()}\n")
+        if hasattr(self, "_task_files_edit"):
+            txt_parts.append(f"FILES:\n{self._task_files_edit.toPlainText()}\n")
+        if hasattr(self, "_task_log_edit"):
+            txt_parts.append(f"EXECUTION LOG:\n{self._task_log_edit.toPlainText()}\n")
+        full_text = "\n".join(txt_parts)
+        QApplication.clipboard().setText(full_text)
+        self._btn_copy_plan.setText("✓ COPIED!")
+        QTimer.singleShot(1500, lambda: self._btn_copy_plan.setText("📋 COPY PLAN"))
+
+    def _on_action_stop_task(self):
+        self._task_stopped = True
+        self._btn_stop_task.setEnabled(False)
+        self._btn_stop_task.setText("STOPPED")
+        if hasattr(self, "_task_log_edit"):
+            self._task_log_edit.append("\n[TASK HALTED BY USER]\n")
+
+    def update_task_data(self, data: dict):
+        self._task_data = data
+        if not hasattr(self, "_task_pbar"):
+            return
+
+        status = str(data.get("status") or "planning").lower()
+        request = str(data.get("request") or data.get("goal") or data.get("description") or "Task in progress...")
+        folder = str(data.get("folder") or "Project")
+        self._task_path = str(data.get("path") or "")
+        model = str(data.get("model") or "Gemini")
+        kind = str(data.get("kind") or "Task").capitalize()
+
+        # Goal & Meta
+        self._lbl_goal_title.setText(f"◈ TASK OBJECTIVE — {folder.upper()}")
+        self._lbl_goal_req.setText(request)
+
+        finished = data.get("finished")
+        started = data.get("started", time.time())
+        took = (finished or time.time()) - started
+        st_color = "#00ffaa" if status == "done" else ("#ff1744" if status != "failed" else "#ff3366")
+        self._lbl_goal_meta.setText(f"Kind: {kind}  │  Model: {model}  │  Status: <font color='{st_color}'>{status.upper()}</font>  │  Elapsed: {took:.1f}s")
+
+        # Phase pills & progress bar
+        phases = list(data.get("phases") or ["planning", "writing", "installing", "testing"])
+        here = phases.index(status) if status in phases else (len(phases) if (status == "done" or finished) else -1)
+        phase_html = []
+        for i, ph in enumerate(phases):
+            if i < here or status == "done":
+                phase_html.append(f"<span style='color:#00ffaa;'>● {ph.upper()} ✓</span>")
+            elif i == here:
+                phase_html.append(f"<span style='color:#ff5252; font-weight:bold;'>▶ {ph.upper()}</span>")
+            else:
+                phase_html.append(f"<span style='color:{C.TEXT_DIM};'>○ {ph.upper()}</span>")
+        if status == "done":
+            phase_html.append("<span style='color:#00ffaa; font-weight:bold;'>✓ COMPLETE</span>")
+        elif status == "failed":
+            phase_html.append("<span style='color:#ff3366; font-weight:bold;'>✕ FAILED</span>")
+
+        self._lbl_phases.setText(" &nbsp;➔&nbsp; ".join(phase_html))
+
+        # Progress calculation
+        if status == "done":
+            pct = 100
+        elif here >= 0:
+            pct = int(((here + 0.5) / max(1, len(phases))) * 100)
+        else:
+            pct = int(data.get("progress", 10))
+        self._task_pbar.setValue(min(100, max(0, pct)))
+
+        # Files list
+        files = data.get("files") or {}
+        if isinstance(files, dict):
+            f_lines = []
+            for fname, finfo in files.items():
+                if isinstance(finfo, dict):
+                    act = "NEW" if finfo.get("action") == "create" else "EDIT"
+                    col = "#00ffaa" if act == "NEW" else "#ff1744"
+                    desc = finfo.get("what", "")
+                    f_lines.append(f"<b><font color='{col}'>[{act}]</font> {fname}</b> — {desc}")
+                else:
+                    f_lines.append(f"<b>{fname}</b>")
+            self._task_files_edit.setHtml("<br>".join(f_lines) if f_lines else "<i>No files registered yet...</i>")
+        elif isinstance(files, list):
+            f_lines = [f"• {f}" for f in files]
+            self._task_files_edit.setHtml("<br>".join(f_lines))
+
+        # Steps / Logs
+        steps = data.get("steps") or []
+        log_lines = []
+        for item in steps:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                t_val, msg = item[0], item[1]
+                log_lines.append(f"[{float(t_val):5.1f}s] {msg}")
+            else:
+                log_lines.append(str(item))
+
+        if log_lines:
+            self._task_log_edit.setPlainText("\n".join(log_lines))
+            self._task_log_edit.verticalScrollBar().setValue(self._task_log_edit.verticalScrollBar().maximum())
 
     def _setup_text(self, lay: QVBoxLayout):
         self._text_edit = QTextEdit()
@@ -5791,7 +6161,7 @@ class JarvisDisplayWindow(QWidget):
                 color: {C.TEXT};
                 border: none;
                 padding: 10px 12px;
-                selection-background-color: rgba(255, 77, 166, 0.35);
+                selection-background-color: rgba(255, 23, 68, 0.35);
             }}
             QScrollBar:vertical {{
                 background: rgba(14, 4, 12, 120);
@@ -5801,7 +6171,7 @@ class JarvisDisplayWindow(QWidget):
                 border-radius: 3px;
             }}
             QScrollBar::handle:vertical {{
-                background: rgba(255, 77, 166, 0.45);
+                background: rgba(255, 23, 68, 0.45);
                 border-radius: 3px;
                 min-height: 20px;
             }}
@@ -6021,6 +6391,40 @@ class JarvisDisplayWindow(QWidget):
         self._drag_start = None
         super().mouseReleaseEvent(e)
 
+    def maximize_window(self):
+        """Maximize display to fill available screen workspace or restore to previous normal geometry."""
+        screen = QApplication.primaryScreen().availableGeometry()
+        if not getattr(self, "_is_maximized_disp", False):
+            self._normal_geom = self.geometry()
+            self._is_maximized_disp = True
+            if hasattr(self, "_max_btn"):
+                self._max_btn.setText("NORM")
+                self._max_btn.setToolTip("Restore display to normal size")
+            self.setGeometry(screen)
+        else:
+            self._is_maximized_disp = False
+            if hasattr(self, "_max_btn"):
+                self._max_btn.setText("MAX")
+                self._max_btn.setToolTip("Maximize display")
+            if getattr(self, "_normal_geom", None):
+                self.setGeometry(self._normal_geom)
+            else:
+                self.resize(680, 500)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def minimize_to_dock(self):
+        """Minimize display into the left-edge dock."""
+        self._on_min_btn_clicked()
+
+    def restore_from_dock(self):
+        """Restore display from left dock and show."""
+        self.setWindowState(Qt.WindowState.WindowNoState)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
     def _on_min_btn_clicked(self):
         self.hide()
         self.minimized_requested.emit(self.display_id)
@@ -6065,6 +6469,8 @@ class MainWindow(QMainWindow):
     _review_sig     = pyqtSignal(str, str, object, object)  # document review payload
     _open_display_sig = pyqtSignal(str, str, str)   # (content_type, source, encoded_title)
     _focus_display_sig = pyqtSignal(int)            # (display_id)
+    _maximize_display_sig = pyqtSignal(int)         # (display_id: 0 = all)
+    _minimize_display_sig = pyqtSignal(int)         # (display_id: 0 = all)
     _close_display_sig = pyqtSignal(int)            # (display_id)
     _stream_user_sig = pyqtSignal(str)              # (streamed user transcript)
     _stream_reply_sig = pyqtSignal(str)             # (streamed assistant transcript)
@@ -6333,19 +6739,22 @@ class MainWindow(QMainWindow):
         self._stream_reply_sig.connect(self._on_stream_reply)
         self._displays: dict[int, JarvisDisplayWindow] = {}
         self._display_counter: int = 0
+        self._reserved_display_ids: set[int] = set()
         self._minimized_display_ids: set[int] = set()
         self._dots_overlay = MinimizedDisplaysDock(self)
         self._dots_overlay.dot_clicked.connect(self._on_restore_display)
         self._open_display_sig.connect(self._on_open_display)
         self._focus_display_sig.connect(self._on_focus_display)
+        self._maximize_display_sig.connect(self._on_maximize_display_win)
+        self._minimize_display_sig.connect(self._on_minimize_display_win)
         self._close_display_sig.connect(self._on_close_display_win)
         self._cam_stop = threading.Event()
 
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
         self._cam_preview = _CameraPreview(self.centralWidget())
 
-        # Clipboard panel (child of central widget, bottom-center)
-        self._clipboard_panel = ClipboardPanel(self.centralWidget())
+        # Clipboard panel (top-level floating tool window, always positioned at center-bottom of screen)
+        self._clipboard_panel = ClipboardPanel(None)
         self._clipboard_panel.action_requested.connect(self._on_clipboard_action)
         QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed)
 
@@ -6367,6 +6776,11 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._is_closed = True
+        if hasattr(self, "_clipboard_panel"):
+            try:
+                self._clipboard_panel.close()
+            except Exception:
+                pass
         if hasattr(self, "_dots_overlay"):
             self._dots_overlay.close()
         if hasattr(self, "_displays"):
@@ -6377,6 +6791,8 @@ class MainWindow(QMainWindow):
                     pass
             self._displays.clear()
             self._minimized_display_ids.clear()
+            self._reserved_display_ids.clear()
+            self._display_counter = 0
         if hasattr(self, "bottom_chat_dock"):
             self.bottom_chat_dock.close()
         if hasattr(self, "left_search_dock"):
@@ -6503,18 +6919,38 @@ class MainWindow(QMainWindow):
                 self.bottom_chat_dock.show()
                 self.bottom_chat_dock.raise_()
 
+    def _get_next_display_id(self, reserve: bool = False) -> int:
+        """Calculate the next sequential display ID starting from 1 based on active displays."""
+        if not self._displays and not self._reserved_display_ids:
+            self._display_counter = 0
+            if reserve:
+                self._reserved_display_ids.add(1)
+            return 1
+        d_id = 1
+        while d_id in self._displays or d_id in self._reserved_display_ids:
+            d_id += 1
+        if reserve:
+            self._reserved_display_ids.add(d_id)
+        return d_id
+
     def _on_open_display(self, content_type: str, source: str, encoded_title: str):
+        disp_id = None
+        title = encoded_title
         if ":" in encoded_title:
-            id_str, title = encoded_title.split(":", 1)
+            id_str, t = encoded_title.split(":", 1)
             try:
-                disp_id = int(id_str)
+                candidate_id = int(id_str)
+                if candidate_id > 0 and candidate_id not in self._displays:
+                    disp_id = candidate_id
+                    title = t
             except ValueError:
-                self._display_counter += 1
-                disp_id = self._display_counter
-        else:
-            self._display_counter += 1
-            disp_id = self._display_counter
-            title = encoded_title
+                pass
+
+        if disp_id is None:
+            disp_id = self._get_next_display_id(reserve=False)
+
+        self._reserved_display_ids.discard(disp_id)
+        self._display_counter = max(self._display_counter, disp_id)
 
         name = f"DISPLAY {disp_id}"
         win = JarvisDisplayWindow(disp_id, name, content_type, source, title)
@@ -6548,8 +6984,12 @@ class MainWindow(QMainWindow):
         self._update_dots_overlay()
 
     def _on_display_closed(self, d_id: int):
+        self._reserved_display_ids.discard(d_id)
         self._minimized_display_ids.discard(d_id)
         self._displays.pop(d_id, None)
+        if not self._displays:
+            self._display_counter = 0
+            self._reserved_display_ids.clear()
         self._update_dots_overlay()
 
     def _update_dots_overlay(self):
@@ -6565,7 +7005,12 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_dots_overlay") and self._dots_overlay.isVisible():
             self._dots_overlay.reposition()
 
-    def _on_focus_display(self, display_id: int):
+    def _on_focus_display(self, display_id: int = 0):
+        if not self._displays:
+            self._on_log_line("SYS: No active displays to focus")
+            return False
+        if display_id == 0:
+            display_id = max(self._displays.keys())
         if display_id in self._displays:
             self._minimized_display_ids.discard(display_id)
             self._update_dots_overlay()
@@ -6583,6 +7028,46 @@ class MainWindow(QMainWindow):
         self._on_log_line(f"SYS: DISPLAY {display_id} not found")
         return False
 
+    def _on_maximize_display_win(self, display_id: int = 0) -> bool:
+        if not self._displays:
+            self._on_log_line("SYS: No active displays to maximize")
+            return False
+        if display_id == 0:
+            for w in list(self._displays.values()):
+                self._minimized_display_ids.discard(w.display_id)
+                w.maximize_window()
+            self._update_dots_overlay()
+            self._on_log_line("SYS: Maximized all displays")
+            return True
+        elif display_id in self._displays:
+            self._minimized_display_ids.discard(display_id)
+            self._update_dots_overlay()
+            self._displays[display_id].maximize_window()
+            self._on_log_line(f"SYS: Maximized DISPLAY {display_id}")
+            return True
+        self._on_log_line(f"SYS: DISPLAY {display_id} not found to maximize")
+        return False
+
+    def _on_minimize_display_win(self, display_id: int = 0) -> bool:
+        if not self._displays:
+            self._on_log_line("SYS: No active displays to minimize")
+            return False
+        if display_id == 0:
+            for did, w in list(self._displays.items()):
+                self._minimized_display_ids.add(did)
+                w.hide()
+            self._update_dots_overlay()
+            self._on_log_line("SYS: Minimized all displays to left edge dock")
+            return True
+        elif display_id in self._displays:
+            self._minimized_display_ids.add(display_id)
+            self._displays[display_id].hide()
+            self._update_dots_overlay()
+            self._on_log_line(f"SYS: Minimized DISPLAY {display_id} to left edge dock")
+            return True
+        self._on_log_line(f"SYS: DISPLAY {display_id} not found to minimize")
+        return False
+
     def _on_close_display_win(self, display_id: int):
         if display_id == 0:
             for w in list(self._displays.values()):
@@ -6592,15 +7077,21 @@ class MainWindow(QMainWindow):
                     pass
             self._displays.clear()
             self._minimized_display_ids.clear()
+            self._reserved_display_ids.clear()
+            self._display_counter = 0
             self._update_dots_overlay()
             self._on_log_line("SYS: Closed all display windows")
             return True
         elif display_id in self._displays:
+            self._reserved_display_ids.discard(display_id)
             self._minimized_display_ids.discard(display_id)
             try:
                 self._displays[display_id].close()
             except Exception:
                 pass
+            if not self._displays:
+                self._display_counter = 0
+                self._reserved_display_ids.clear()
             self._update_dots_overlay()
             self._on_log_line(f"SYS: Closed DISPLAY {display_id}")
             return True
@@ -6703,12 +7194,12 @@ class MainWindow(QMainWindow):
                     padding: 3px 8px;
                 }}
                 QPushButton:hover {{
-                    background: rgba(255, 77, 166, 0.25);
+                    background: rgba(255, 23, 68, 0.25);
                     border: 1px solid {C.PRI};
                     color: #ffffff;
                 }}
                 QPushButton:pressed {{
-                    background: rgba(255, 77, 166, 0.45);
+                    background: rgba(255, 23, 68, 0.45);
                 }}
             """)
             return b
@@ -6753,7 +7244,7 @@ class MainWindow(QMainWindow):
         if active:
             return f"""
                 QPushButton {{
-                    background: rgba(255, 77, 166, 0.25);
+                    background: rgba(255, 23, 68, 0.25);
                     color: #ffffff;
                     border: 1px solid {C.PRI};
                     border-radius: 3px;
@@ -6769,7 +7260,7 @@ class MainWindow(QMainWindow):
                 padding: 5px 8px;
             }}
             QPushButton:hover {{
-                background: rgba(255, 77, 166, 0.12);
+                background: rgba(255, 23, 68, 0.12);
                 color: {C.TEXT};
                 border-color: {C.BORDER_B};
             }}
@@ -7002,7 +7493,7 @@ class MainWindow(QMainWindow):
                     border: 1px solid {C.BORDER_B}; border-radius: 4px; padding: 8px 12px;
                 }}
                 QPushButton:hover {{
-                    background: rgba(255, 77, 166, 0.25);
+                    background: rgba(255, 23, 68, 0.25);
                     border: 1px solid {C.PRI}; color: #ffffff;
                 }}
             """)
@@ -8350,10 +8841,28 @@ class MainWindow(QMainWindow):
     _JOB_PHASES = ("reading", "planning", "writing", "checking")
 
     def _show_code_job(self, job: dict):
-        """Slot — Qt main thread. Draws the coding agent's progress."""
+        """Slot — Qt main thread. Draws the coding agent's progress in dedicated Task Display Window."""
         import time as _time
         if not job:
             return
+
+        folder = str(job.get("folder") or "TASK")
+        task_id = folder
+
+        # Find or open dedicated task progress display window
+        task_win = None
+        for w in list(self._displays.values()):
+            if getattr(w, "content_type", "") == "task" and getattr(w, "_task_id", "") == task_id:
+                task_win = w
+                break
+
+        if task_win is not None:
+            task_win.update_task_data(job)
+        else:
+            disp_id = self._on_open_display("task", job, f"TASK: {task_id}")
+            task_win = self._displays.get(disp_id)
+            if task_win:
+                task_win._task_id = task_id
         e = self._esc
         col = lambda name: getattr(C, name, C.TEXT)
         status = job.get("status", "")
@@ -9419,15 +9928,18 @@ class MainWindow(QMainWindow):
             pass
 
     def _show_clipboard_panel(self, text: str):
+        self._position_clipboard_panel()
         self._clipboard_panel.show_clipboard(text)
         self._position_clipboard_panel()
+        self._clipboard_panel.raise_()
+        self._clipboard_panel.activateWindow()
 
     def _position_clipboard_panel(self):
-        cw = self.centralWidget()
+        screen = QApplication.primaryScreen().availableGeometry()
         pw = ClipboardPanel._W
         ph = self._clipboard_panel.sizeHint().height() or ClipboardPanel._H
-        x = (cw.width() - pw) // 2
-        y = cw.height() - ph - 6
+        x = max(screen.left() + 10, min(screen.right() - pw - 10, screen.left() + (screen.width() - pw) // 2))
+        y = max(screen.top() + 10, screen.bottom() - ph - 24)
         self._clipboard_panel.setGeometry(x, y, pw, ph)
         self._clipboard_panel.raise_()
 
@@ -9483,7 +9995,7 @@ class MainWindow(QMainWindow):
                         border-radius: 4px; padding: 4px 8px;
                     }}
                     QPushButton:hover {{
-                        background: rgba(255, 77, 166, 0.25);
+                        background: rgba(255, 23, 68, 0.25);
                         border: 1px solid {C.PRI};
                         color: #ffffff;
                     }}
@@ -9967,24 +10479,60 @@ class JarvisUI:
         if not self.muted:
             self.set_state("LISTENING")
 
+    def show_task_progress(self, task_data: dict) -> int:
+        """Thread-safe: show or update plan & task progress in dedicated display window with actions."""
+        try:
+            if not self._is_alive():
+                return 0
+            self._win._codejob_sig.emit(task_data)
+            return 1
+        except (RuntimeError, AttributeError):
+            return 0
+
+    def show_plan(self, title: str, plan_data: dict) -> int:
+        """Thread-safe: show plan in dedicated display window with actions."""
+        data = dict(plan_data or {})
+        data.setdefault("folder", title)
+        data.setdefault("request", title)
+        return self.show_task_progress(data)
+
     def open_display(self, content_type: str, source: str, title: str = "") -> int:
         """Thread-safe: Open an image or video in a new named floating display window."""
         try:
             if not self._is_alive():
                 return 0
-            self._win._display_counter += 1
-            disp_id = self._win._display_counter
+            disp_id = self._win._get_next_display_id(reserve=True)
             self._win._open_display_sig.emit(str(content_type), str(source), f"{disp_id}:{title}")
             return disp_id
         except (RuntimeError, AttributeError):
             return 0
 
-    def focus_display(self, display_id: int) -> bool:
-        """Thread-safe: Focus display N and bring to front in center of screen."""
+    def focus_display(self, display_id: int = 0) -> bool:
+        """Thread-safe: Focus display N (or latest if 0) and bring to front in center of screen."""
         try:
             if not self._is_alive():
                 return False
             self._win._focus_display_sig.emit(int(display_id))
+            return True
+        except (RuntimeError, AttributeError):
+            return False
+
+    def maximize_display_window(self, display_id: int = 0) -> bool:
+        """Thread-safe: Maximize display N (or 0 for all)."""
+        try:
+            if not self._is_alive():
+                return False
+            self._win._maximize_display_sig.emit(int(display_id))
+            return True
+        except (RuntimeError, AttributeError):
+            return False
+
+    def minimize_display_window(self, display_id: int = 0) -> bool:
+        """Thread-safe: Minimize display N to the left edge dock (or 0 for all)."""
+        try:
+            if not self._is_alive():
+                return False
+            self._win._minimize_display_sig.emit(int(display_id))
             return True
         except (RuntimeError, AttributeError):
             return False
@@ -10011,6 +10559,8 @@ class JarvisUI:
                     "name": getattr(w, "display_name", f"DISPLAY {d_id}"),
                     "type": getattr(w, "content_type", "image"),
                     "title": getattr(w, "title_text", ""),
+                    "minimized": d_id in getattr(self._win, "_minimized_display_ids", set()),
+                    "maximized": getattr(w, "_is_maximized_disp", False),
                 })
             return res
         except (RuntimeError, AttributeError):

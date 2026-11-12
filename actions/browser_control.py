@@ -664,19 +664,34 @@ class _BrowserSession:
 
         profile = _real_profile_dir(self.browser_name)
 
+        launch_args = [
+            "--start-maximized",
+            "--disable-blink-features=AutomationControlled",
+            "--no-first-run",
+            "--disable-default-apps",
+            "--no-default-browser-check",
+        ]
+
+        if engine_name == "chromium":
+            try:
+                from actions.vimium_c import get_vimium_extension_path
+                vc_ext = get_vimium_extension_path()
+                if vc_ext:
+                    launch_args.extend([
+                        f"--disable-extensions-except={vc_ext}",
+                        f"--load-extension={vc_ext}",
+                    ])
+                    print(f"[Browser] 🧩 Vimium C extension loaded from: {vc_ext}")
+            except Exception as e:
+                print(f"[Browser] Vimium C load check notice: {e}")
+
         kwargs = {
             "headless":    False,
             "slow_mo":     0,
             "viewport":    None,
             "no_viewport": True,
             "timeout":     25_000,
-            "args": [
-                "--start-maximized",
-                "--disable-blink-features=AutomationControlled",
-                "--no-first-run",
-                "--disable-default-apps",
-                "--no-default-browser-check",
-            ],
+            "args":        launch_args,
         }
 
         if exe:
@@ -899,21 +914,37 @@ class _BrowserSession:
 
     async def smart_click(self, description: str) -> str:
         page = await self._get_page()
+        # 1. High-confidence semantic match
         for role in ("button", "link", "searchbox", "textbox", "menuitem", "tab"):
             try:
                 loc = page.get_by_role(role, name=description)
                 if await loc.count() > 0:
-                    await loc.first.click(timeout=5_000)
+                    await loc.first.click(timeout=3_000)
                     return f"Clicked ({role}): '{description}'"
             except Exception:
                 pass
+
+        # 2. Hybrid Vimium C keyboard link hints
+        try:
+            from actions.vimium_c import get_vimium_controller, is_vimium_installed
+            if is_vimium_installed():
+                vc = get_vimium_controller()
+                matched_hint = await vc.find_hint_for_target(page, description, new_tab=False)
+                if matched_hint:
+                    res = await vc.execute_hint(page, matched_hint)
+                    if res.get("verified"):
+                        return f"Clicked via Vimium C hint [{matched_hint.hint_code}]: '{description}'"
+        except Exception as e:
+            logger.debug(f"[Browser] Vimium C smart_click attempt error: {e}")
+
+        # 3. Text, placeholder, and attribute locators
         for attempt in (
-            lambda: page.get_by_text(description, exact=False).first.click(timeout=5_000),
-            lambda: page.get_by_placeholder(description, exact=False).first.click(timeout=5_000),
+            lambda: page.get_by_text(description, exact=False).first.click(timeout=4_000),
+            lambda: page.get_by_placeholder(description, exact=False).first.click(timeout=4_000),
             lambda: page.locator(
                 f'[alt*="{description}" i],[title*="{description}" i],'
                 f'[aria-label*="{description}" i]'
-            ).first.click(timeout=5_000),
+            ).first.click(timeout=4_000),
         ):
             try:
                 await attempt()
@@ -921,6 +952,93 @@ class _BrowserSession:
             except Exception:
                 pass
         return f"Could not find element: '{description}'"
+
+    async def hint_click(self, description: str, new_tab: bool = False) -> str:
+        """
+        Activates Vimium C link hints ('f' or 'F'), matches the target description,
+        and executes the corresponding keyboard hint.
+        Falls back to smart_click if Vimium C is not active or no hint matches.
+        """
+        page = await self._get_page()
+        from actions.vimium_c import get_vimium_controller
+        vc = get_vimium_controller()
+
+        try:
+            matched_hint = await vc.find_hint_for_target(page, description, new_tab=new_tab)
+            if matched_hint:
+                print(f"[Browser/VimiumC] Found hint [{matched_hint.hint_code}] for '{description}' ({matched_hint.summary()})")
+                res = await vc.execute_hint(page, matched_hint)
+                action_type = "Opened in new tab" if new_tab else "Activated"
+                if res.get("verified"):
+                    return f"{action_type} via Vimium C hint [{matched_hint.hint_code}]: '{description}' -> {res.get('url_after')}"
+                return f"Sent Vimium C hint [{matched_hint.hint_code}] for '{description}'."
+            else:
+                print(f"[Browser/VimiumC] No matching hint found for '{description}', falling back to Playwright smart_click...")
+        except Exception as e:
+            print(f"[Browser/VimiumC] Hint click exception ({e}), falling back to Playwright smart_click...")
+
+        # Graceful fallback to existing Playwright smart_click
+        return await self.smart_click(description)
+
+    async def hint_scroll(self, direction: str = "down", amount: int = 1) -> str:
+        """Scrolls using Vimium C keys ('j', 'k', 'gg', 'G')."""
+        page = await self._get_page()
+        from actions.vimium_c import get_vimium_controller
+        vc = get_vimium_controller()
+        try:
+            return await vc.scroll(page, direction=direction, amount=amount)
+        except Exception as e:
+            return await self.scroll(direction=direction, amount=amount * 300)
+
+    async def vimium_command(self, command: str) -> str:
+        """Executes a direct Vimium C keyboard command."""
+        page = await self._get_page()
+        from actions.vimium_c import get_vimium_controller
+        vc = get_vimium_controller()
+        cmd = command.strip()
+        if cmd == "f":
+            ok = await vc.activate_hints(page, new_tab=False)
+            return "Activated Vimium C Link Hints ('f')." if ok else "Failed to activate Vimium C hints."
+        elif cmd == "F":
+            ok = await vc.activate_hints(page, new_tab=True)
+            return "Activated Vimium C New-Tab Link Hints ('F')." if ok else "Failed to activate Vimium C hints."
+        elif cmd in ("j", "down"):
+            return await vc.scroll(page, "down")
+        elif cmd in ("k", "up"):
+            return await vc.scroll(page, "up")
+        elif cmd in ("gg", "top"):
+            return await vc.scroll(page, "top")
+        elif cmd in ("G", "bottom"):
+            return await vc.scroll(page, "bottom")
+        elif cmd in ("J", "next_tab"):
+            return await vc.next_tab(page)
+        elif cmd in ("K", "prev_tab"):
+            return await vc.prev_tab(page)
+        elif cmd in ("x", "close_tab"):
+            return await vc.close_tab(page)
+        elif cmd in ("X", "restore_tab"):
+            return await vc.restore_tab(page)
+        elif cmd in ("gi", "focus_input"):
+            return await vc.focus_input(page)
+        else:
+            await page.keyboard.press("Escape")
+            await page.keyboard.press(cmd)
+            return f"Executed Vimium C command: '{cmd}'"
+
+    async def get_hints(self) -> str:
+        """Returns a formatted list of all visible Vimium C link hints on the page."""
+        page = await self._get_page()
+        from actions.vimium_c import get_vimium_controller
+        vc = get_vimium_controller()
+        active = await vc.activate_hints(page, new_tab=False)
+        if not active:
+            return "Could not activate Vimium C hints on this page."
+        hints = await vc.get_visible_hints(page)
+        await vc.cancel_hints(page)
+        if not hints:
+            return "No visible link hints found on the current page."
+        lines = [h.summary() for h in hints[:30]]
+        return f"Visible hints ({len(hints)} total):\n" + "\n".join(lines)
 
     async def smart_type(self, description: str, text: str) -> str:
         page = await self._get_page()
@@ -1178,7 +1296,7 @@ def browser_control(
 
                 if browser_win:
                     target_text = params.get("text") or params.get("description") or params.get("selector") or params.get("name", "")
-                    if action in ("click", "smart_click"):
+                    if action in ("click", "smart_click", "hint_click", "vimium_click"):
                         if target_text:
                             click_res = windows_uia.click_element(target_text, window=browser_win)
                             if click_res.get("status") in ("done", "success"):
@@ -1196,7 +1314,7 @@ def browser_control(
                         if ins.get("status") == "success":
                             names = [e["name"] for e in ins.get("elements", []) if e.get("name")]
                             return outcome.done("browser_control", elements=names[:30], count=len(names))
-                    elif action == "scroll":
+                    elif action in ("scroll", "hint_scroll", "vimium_scroll"):
                         windows_uia.scroll(direction=params.get("direction", "down"), amount=int(params.get("amount", 500)), window=browser_win)
                         return outcome.done("browser_control", action="scroll", direction=params.get("direction", "down"))
         except Exception as e:
@@ -1228,6 +1346,15 @@ def browser_control(
             result = sess.run(sess.fill_form(params.get("fields", {})))
         elif action == "smart_click":
             result = sess.run(sess.smart_click(params.get("description", "")))
+        elif action in ("hint_click", "vimium_click"):
+            target_desc = params.get("description") or params.get("text") or params.get("query") or params.get("selector", "")
+            result = sess.run(sess.hint_click(target_desc, new_tab=bool(params.get("new_tab", False))))
+        elif action in ("hint_scroll", "vimium_scroll"):
+            result = sess.run(sess.hint_scroll(params.get("direction", "down"), int(params.get("amount", 1))))
+        elif action == "vimium_command":
+            result = sess.run(sess.vimium_command(params.get("key") or params.get("command", "f")))
+        elif action in ("get_hints", "list_hints"):
+            result = sess.run(sess.get_hints())
         elif action == "smart_type":
             result = sess.run(sess.smart_type(params.get("description", ""), params.get("text", "")))
         elif action == "get_text":
@@ -1293,7 +1420,7 @@ TOOL = {
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "go_to | search | click | type | scroll | fill_form | smart_click | smart_type | get_text | get_url | press | new_tab | close_tab | screenshot | back | forward | reload | switch | list_browsers | close | close_all"
+                "description": "go_to | search | click | hint_click | type | scroll | hint_scroll | vimium_command | get_hints | fill_form | smart_click | smart_type | get_text | get_url | press | new_tab | close_tab | screenshot | back | forward | reload | switch | list_browsers | close | close_all"
             },
             "browser": {
                 "type": "STRING",

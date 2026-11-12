@@ -39,12 +39,12 @@ class TestKeenaHudTransformation(unittest.TestCase):
         self.assertLessEqual(y + self.win.height(), screen.bottom())
 
     def test_03_color_palette(self):
-        """Verify Keena magenta visual identity colors."""
-        self.assertEqual(C.PRI.lower(), "#ff4da6")
-        self.assertEqual(C.ACC.lower(), "#ba55ff")
-        self.assertEqual(C.TEXT.lower(), "#ffecf7")
-        self.assertEqual(C.TEXT_DIM.lower(), "#d6a0be")
-        self.assertIn("0a030a", C.BG.lower())
+        """Verify glowing red visual identity colors."""
+        self.assertEqual(C.PRI.lower(), "#ff1744")
+        self.assertEqual(C.ACC.lower(), "#ff5252")
+        self.assertEqual(C.TEXT.lower(), "#ffeded")
+        self.assertEqual(C.TEXT_DIM.lower(), "#d69da4")
+        self.assertIn("0a0203", C.BG.lower())
 
     def test_04_arc_reactor_animation_and_states(self):
         """Verify Arc Reactor responds distinctly to application states."""
@@ -535,6 +535,269 @@ class TestKeenaHudTransformation(unittest.TestCase):
 
         # Cleanup
         self.win._on_close_display_win(0)
+
+    def test_20_task_plan_and_progress_display_window(self):
+        """Verify dedicated Task Plan and Progress display window with roadmap, phases, and actions."""
+        sample_task = {
+            "folder": "TOC_Study_Content",
+            "path": "C:/MockPath/TOC_Study_Content",
+            "model": "gemini-2.0-flash",
+            "kind": "build",
+            "phases": ["planning", "writing", "installing", "testing"],
+            "request": "Generate comprehensive study content for theory of computation...",
+            "status": "writing",
+            "started": 1000.0,
+            "finished": None,
+            "summary": "New python project 'TOC_Study_Content': 3 files",
+            "files": {
+                "content.py": {"action": "create", "what": "Defines variables containing static text", "state": "done"},
+                "file_writer.py": {"action": "create", "what": "Exposes function to format and write content", "state": "done"},
+                "main.py": {"action": "create", "what": "Initializes contents and invokes writer", "state": "writing"}
+            },
+            "steps": [
+                (0.0, "Planning project structure..."),
+                (3.4, "Writing content.py..."),
+                (9.0, "Writing file_writer.py..."),
+                (13.0, "Writing main.py...")
+            ]
+        }
+
+        # Open task progress display via _show_code_job
+        self.win._show_code_job(sample_task)
+
+        # Verify dedicated display was opened
+        self.assertGreater(len(self.win._displays), 0)
+        disp_id = max(self.win._displays.keys())
+        task_win = self.win._displays[disp_id]
+        self.assertEqual(task_win.content_type, "task")
+        self.assertIn("TOC_Study_Content", task_win.title_text)
+
+        # Verify components in task display
+        self.assertIn("Generate comprehensive study content", task_win._lbl_goal_req.text())
+        self.assertGreater(task_win._task_pbar.value(), 0)
+        self.assertIn("content.py", task_win._task_files_edit.toPlainText())
+        self.assertIn("Writing main.py", task_win._task_log_edit.toPlainText())
+
+        # Verify task action buttons exist and are active
+        self.assertTrue(hasattr(task_win, "_btn_open_folder"))
+        self.assertTrue(hasattr(task_win, "_btn_run_project"))
+        self.assertTrue(hasattr(task_win, "_btn_copy_plan"))
+        self.assertTrue(hasattr(task_win, "_btn_stop_task"))
+
+        # Test copy plan action
+        task_win._btn_copy_plan.click()
+        copied = QApplication.clipboard().text()
+        self.assertIn("Generate comprehensive study content", copied)
+
+        # Test live update of progress
+        sample_task["status"] = "done"
+        sample_task["steps"].append((19.0, "All tests passed successfully."))
+        self.win._show_code_job(sample_task)
+        self.assertEqual(task_win._task_pbar.value(), 100)
+        self.assertIn("All tests passed successfully", task_win._task_log_edit.toPlainText())
+
+        # Test stop task action
+        task_win._btn_stop_task.click()
+        self.assertTrue(getattr(task_win, "_task_stopped", False))
+
+        # Cleanup
+        self.win._on_close_display_win(0)
+
+    def test_21_sequential_display_numbering_and_reset(self):
+        """Verify display IDs count sequentially from active displays and reset to 1 when none are active."""
+        # Ensure clean state
+        self.win._on_close_display_win(0)
+        self.assertEqual(len(self.win._displays), 0)
+
+        # 1. First display starts with 1
+        d1 = self.win._on_open_display("image", "", "First Image")
+        self.assertEqual(d1, 1)
+
+        # 2. Open up to 5 displays (2, 3, 4, 5)
+        d2 = self.win._on_open_display("image", "", "Second Image")
+        d3 = self.win._on_open_display("image", "", "Third Image")
+        d4 = self.win._on_open_display("image", "", "Fourth Image")
+        d5 = self.win._on_open_display("image", "", "Fifth Image")
+        self.assertEqual([d1, d2, d3, d4, d5], [1, 2, 3, 4, 5])
+        self.assertEqual(len(self.win._displays), 5)
+
+        # 3. Next display becomes 6
+        d6 = self.win._on_open_display("image", "", "Sixth Image")
+        self.assertEqual(d6, 6)
+
+        # 4. Close all active displays
+        self.win._on_close_display_win(0)
+        self.assertEqual(len(self.win._displays), 0)
+
+        # 5. After closing all displays, the next created display MUST start at 1 again!
+        new_d1 = self.win._on_open_display("image", "", "Fresh Image")
+        self.assertEqual(new_d1, 1)
+
+        # 6. Open display 2 and 3
+        new_d2 = self.win._on_open_display("image", "", "Fresh Image 2")
+        new_d3 = self.win._on_open_display("image", "", "Fresh Image 3")
+        self.assertEqual(new_d2, 2)
+        self.assertEqual(new_d3, 3)
+
+        # 7. Close display 2 individually -> next display should fill slot 2
+        self.win._on_close_display_win(2)
+        self.assertNotIn(2, self.win._displays)
+        slot_2 = self.win._on_open_display("image", "", "Re-opened Slot 2")
+        self.assertEqual(slot_2, 2)
+
+        # 8. Clean up
+        self.win._on_close_display_win(0)
+        self.assertEqual(len(self.win._displays), 0)
+
+    def test_22_global_screen_bottom_clipboard_panel(self):
+        """Verify clipboard quick-action panel appears at physical screen center-bottom in normal, minimized and maximized states."""
+        clip_panel = self.win._clipboard_panel
+        screen = QApplication.primaryScreen().availableGeometry()
+        pw = clip_panel.width()
+        ph = clip_panel.sizeHint().height() or clip_panel._H
+
+        expected_x = max(screen.left() + 10, min(screen.right() - pw - 10, screen.left() + (screen.width() - pw) // 2))
+        expected_y = max(screen.top() + 10, screen.bottom() - ph - 24)
+
+        # 1. Trigger in normal window state
+        self.win._show_clipboard_panel("This is a test snippet for the clipboard trigger")
+        self.assertTrue(clip_panel.isVisible())
+        self.assertEqual(clip_panel.x(), expected_x)
+        self.assertEqual(clip_panel.y(), expected_y)
+
+        # 2. Minimize JARVIS to 58x58 favicon orb
+        self.win.toggle_minimize_top()
+        self.assertTrue(getattr(self.win, "_is_minimized_top", False))
+
+        # Trigger clipboard while JARVIS is minimized
+        self.win._show_clipboard_panel("Another long text snippet to trigger actions while minimized")
+        self.assertTrue(clip_panel.isVisible())
+        # Must still be positioned at center-bottom of screen, NOT clipped to 58x58 orb
+        self.assertEqual(clip_panel.x(), expected_x)
+        self.assertEqual(clip_panel.y(), expected_y)
+
+        # 3. Restore JARVIS window
+        self.win.toggle_minimize_top()
+        self.assertFalse(getattr(self.win, "_is_minimized_top", False))
+
+        # Re-position verification
+        self.win._position_clipboard_panel()
+        self.assertEqual(clip_panel.x(), expected_x)
+        self.assertEqual(clip_panel.y(), expected_y)
+
+        # Clean up
+        clip_panel.hide()
+
+    def test_23_display_control_focus_maximize_minimize_close(self):
+        """Verify JARVIS can control displays: focus, maximize, minimize to dock, and close (individually & all)."""
+        from actions.display_window import display_window
+
+        # 1. Test tool action routing with mock player
+        mock_player = MagicMock()
+        mock_player.get_open_displays.return_value = [
+            {"display_id": 1, "name": "DISPLAY 1", "title": "Doc 1"},
+            {"display_id": 2, "name": "DISPLAY 2", "title": "Doc 2"},
+        ]
+        mock_player.maximize_display_window.return_value = True
+        mock_player.minimize_display_window.return_value = True
+        mock_player.focus_display.return_value = True
+        mock_player.close_display_window.return_value = True
+
+        # Maximize specific display
+        res_max1 = display_window({"action": "maximize", "display_id": 1}, player=mock_player)
+        self.assertIn("Maximized Display 1", res_max1)
+        mock_player.maximize_display_window.assert_called_with(1)
+
+        # Maximize all displays
+        res_max_all = display_window({"action": "maximize", "display_id": 0}, player=mock_player)
+        self.assertIn("Maximized all display windows", res_max_all)
+        mock_player.maximize_display_window.assert_called_with(0)
+
+        # Minimize specific display
+        res_min2 = display_window({"action": "minimize", "display_id": 2}, player=mock_player)
+        self.assertIn("Minimized Display 2 to the left dock", res_min2)
+        mock_player.minimize_display_window.assert_called_with(2)
+
+        # Minimize all displays
+        res_min_all = display_window({"action": "minimize", "text": "minimize all displays"}, player=mock_player)
+        self.assertIn("Minimized all display windows to the left dock", res_min_all)
+        mock_player.minimize_display_window.assert_called_with(0)
+
+        # Focus specific display
+        res_foc1 = display_window({"action": "focus", "display_id": 1}, player=mock_player)
+        self.assertIn("Display 1 is now front and center", res_foc1)
+        mock_player.focus_display.assert_called_with(1)
+
+        # Close specific display
+        res_cls2 = display_window({"action": "close", "display_id": 2}, player=mock_player)
+        self.assertIn("Closed Display 2", res_cls2)
+        mock_player.close_display_window.assert_called_with(2)
+
+        # Close all displays
+        res_cls_all = display_window({"action": "close", "display_id": 0}, player=mock_player)
+        self.assertIn("Closed all extra display windows", res_cls_all)
+        mock_player.close_display_window.assert_called_with(0)
+
+        # 2. Test live UI execution on MainWindow and JarvisDisplayWindow
+        self.win._on_close_display_win(0)
+        self.assertEqual(len(self.win._displays), 0)
+
+        d1 = self.win._on_open_display("image", "", "Chart 1")
+        d2 = self.win._on_open_display("text", "Some code content", "Code 2")
+        self.assertEqual([d1, d2], [1, 2])
+        w1 = self.win._displays[1]
+        w2 = self.win._displays[2]
+
+        screen = QApplication.primaryScreen().availableGeometry()
+
+        # Maximize Display 1
+        ok_max1 = self.win._on_maximize_display_win(1)
+        self.assertTrue(ok_max1)
+        self.assertTrue(w1._is_maximized_disp)
+        self.assertEqual(w1.geometry(), screen)
+
+        # Toggle Display 1 back to normal
+        w1.maximize_window()
+        self.assertFalse(w1._is_maximized_disp)
+
+        # Maximize all displays
+        ok_max_all = self.win._on_maximize_display_win(0)
+        self.assertTrue(ok_max_all)
+        self.assertTrue(w1._is_maximized_disp)
+        self.assertTrue(w2._is_maximized_disp)
+
+        # Minimize Display 2 to left dock
+        ok_min2 = self.win._on_minimize_display_win(2)
+        self.assertTrue(ok_min2)
+        self.assertFalse(w2.isVisible())
+        self.assertIn(2, self.win._minimized_display_ids)
+        self.assertTrue(self.win._dots_overlay.isVisible())
+
+        # Minimize all displays to left dock
+        ok_min_all = self.win._on_minimize_display_win(0)
+        self.assertTrue(ok_min_all)
+        self.assertFalse(w1.isVisible())
+        self.assertFalse(w2.isVisible())
+        self.assertEqual(self.win._minimized_display_ids, {1, 2})
+
+        # Focus Display 2 (should un-minimize from dock, center on screen, and raise)
+        ok_foc2 = self.win._on_focus_display(2)
+        self.assertTrue(ok_foc2)
+        self.assertTrue(w2.isVisible())
+        self.assertNotIn(2, self.win._minimized_display_ids)
+        self.assertEqual(w2.x(), max(screen.left() + 20, screen.center().x() - w2.width() // 2))
+
+        # Close Display 1
+        ok_cls1 = self.win._on_close_display_win(1)
+        self.assertTrue(ok_cls1)
+        self.assertNotIn(1, self.win._displays)
+        self.assertIn(2, self.win._displays)
+
+        # Close all displays
+        ok_cls_all = self.win._on_close_display_win(0)
+        self.assertTrue(ok_cls_all)
+        self.assertEqual(len(self.win._displays), 0)
+        self.assertFalse(self.win._dots_overlay.isVisible())
 
 if __name__ == "__main__":
     unittest.main()
