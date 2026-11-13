@@ -1234,17 +1234,13 @@ class JarvisLive:
         # already knows the respectful register of whatever language it is in.
         _addr = (f"ADDRESS: Always call the user '{_user_name}'."
                  if _user_name
-                 else 'ADDRESS: Address the user with the ordinary respectful form '
-                      'for a superior in the language you are currently speaking — '
-                      '"sir" in English, its everyday equivalent in any other '
-                      'language. Never an archaic or aristocratic form, and never '
-                      'the form from a different language than the one you are '
-                      'speaking in this sentence.')
+                 else 'ADDRESS: Address the user as "sir".')
         identity_ctx = (
             f"[IDENTITY]\n"
             f"Your name is {self._asst_name}. "
             f"Always refer to yourself as {self._asst_name}.\n"
-            f"{_addr}\n\n"
+            f"{_addr}\n"
+            f"Always understand the user as speaking English and always reply in English only, never in any other language, even if the user's words are misheard or the content contains other languages.\n\n"
         )
 
         # Everything the model is told about *itself* is derived here, not
@@ -2142,9 +2138,7 @@ class JarvisLive:
         if not self.session:
             return
 
-        lang_clause = (f" Speak this greeting in {lang}, then follow the "
-                       f"user's own language from their first reply onward."
-                       if lang else "")
+        lang_clause = " Reply in English only."
         name_clause = f" Address the user as {name}." if name else ""
 
         # Pop any pending session context so it does not accumulate
@@ -2182,7 +2176,7 @@ class JarvisLive:
 
         convo = "\n".join(log[-40:])   # cap at last 40 turns to stay within token budget
         prompt = (
-            f"Summarize this conversation in 1-2 sentences in {lang}. "
+            "Summarize this conversation in 1-2 sentences in English. "
             "Focus on what the user accomplished or discussed. "
             "Output ONLY the summary text, nothing else:\n\n" + convo
         )
@@ -2192,7 +2186,7 @@ class JarvisLive:
                 gemini.text, prompt, gemini.SMART, None, 30_000,
             )
             if summary:
-                save_session_summary(summary, lang)
+                save_session_summary(summary, "English")
         except Exception as e:
             print(f"[Memory] ⚠️ Session summary failed: {e}")
 
@@ -2238,7 +2232,7 @@ class JarvisLive:
                         for alert in alerts:
                             msg = (
                                 f"{alert}\n\n"
-                                f"Inform the user about this development naturally in {lang}. "
+                                "Inform the user about this development naturally in English. "
                                 "One brief sentence only."
                             )
                             await self.session.send_client_content(

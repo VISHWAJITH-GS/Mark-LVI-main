@@ -161,10 +161,11 @@ def connect_bluetooth_device(device_name: str) -> dict:
 
     # Also check device enumeration via Windows Audio Endpoints
     target_name = matched.get("FriendlyName") if matched else device_name
+    safe_name = re.sub(r'[^a-zA-Z0-9_\-\. ]', '', str(target_name)).strip()
 
     # Try connecting via PowerShell DeviceManagement / PnpDevice or triggering audio endpoint
     ps = f"""
-$name = "{target_name}"
+$name = "{safe_name}"
 $dev = Get-PnpDevice -Class Bluetooth -FriendlyName "*$name*" -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($dev) {{
     # Ensure enabled

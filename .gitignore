@@ -53,3 +53,9 @@ logs/
 downloads/
 screenshots/
 skills/.backups/
+memory/reminders/
+reports/
+scratch/
+data/
+local_data/
+*.pyc

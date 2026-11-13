@@ -135,6 +135,9 @@ def catalog(refresh: bool = False) -> dict:
             data = cl.get(_CATALOG_URL).json()
         for key, entry in (data or {}).items():
             lang = (entry.get("language") or {})
+            code = (lang.get("code", "") or key.split("-")[0]).lower()
+            if not code.startswith("en"):
+                continue
             found[key] = {
                 "language": lang.get("code", "") or key.split("-")[0],
                 "family": lang.get("family", ""),
@@ -169,10 +172,9 @@ def prefetch(on_ready=None) -> None:
 
 
 def installed() -> list[str]:
-    """Voices already on disk. Reads the folder, so a voice added by hand or
-    left over from a previous run is found without anything being registered."""
+    """Voices already on disk (English only)."""
     try:
-        return sorted(p.stem for p in _VOICE_DIR.glob("*.onnx"))
+        return sorted(p.stem for p in _VOICE_DIR.glob("*.onnx") if language_of(p.stem).startswith("en"))
     except Exception:
         return []
 
@@ -210,17 +212,15 @@ def download(voice: str, log=None) -> Path:
 # ─────────────────────────────────────────────────────────────────────────────
 class PiperTTS:
     def __init__(self, cfg: dict):
-        self.voice = (cfg.get("voice") or "").strip()
-        # Follow the language the user spoke, when a voice for it is on disk.
-        self.follow = str(cfg.get("follow_language", "1")) not in ("", "0",
-                                                                   "False",
-                                                                   "false")
+        raw_voice = (cfg.get("voice") or "").strip()
+        if not raw_voice or not language_of(raw_voice).startswith("en"):
+            raw_voice = "en_US-lessac-medium"
+        self.voice = raw_voice
+        # English only policy
+        self.follow = False
         self.speed = _num(cfg.get("speed"), 1.0)
         self.caps = dict(DEFAULT_CAPS)
         self.caps["audio_out"] = True
-        # The voice that actually spoke last. With language-following the
-        # configured voice and the one used can differ, and a timing report
-        # naming the wrong one is a report that misleads.
         self.last_voice = ""
         self._log = cfg.get("log") or (lambda m: None)
         self._scan: list = []
@@ -256,28 +256,10 @@ class PiperTTS:
         return loaded
 
     def _pick(self, language: str) -> str:
-        """Which voice speaks this turn.
-
-        The chosen voice unless the user is speaking another language and a
-        voice for it is already here. Downloading mid-sentence is deliberately
-        not attempted: sixty megabytes of silence is a worse answer than the
-        wrong accent."""
-        if not (self.follow and language):
+        """Which voice speaks this turn (English only)."""
+        if self.voice and language_of(self.voice).startswith("en"):
             return self.voice
-        code = language.split("-")[0].split("_")[0].lower()
-        if self.voice and language_of(self.voice) == code:
-            return self.voice
-        # `installed()` reads the folder, and this runs on every sentence.
-        # Cached for a few seconds: a voice appearing mid-conversation is
-        # possible (a download just finished) but not something to pay a disk
-        # scan per utterance to notice.
-        now = time.monotonic()
-        if now - self._scan_at > 5.0:
-            self._scan, self._scan_at = installed(), now
-        for name in self._scan:
-            if language_of(name) == code:
-                return name
-        return self.voice
+        return "en_US-lessac-medium"
 
     async def warmup(self, log=None) -> None:
         """Download and load the voice before anybody speaks.
@@ -482,13 +464,12 @@ def available() -> bool:
 
 
 def choices_for(field_key: str) -> tuple:
-    """The voice list for the panel. Downloaded ones first so the useful
-    entries are at the top rather than buried in a hundred and fifty."""
+    """The voice list for the panel (English only)."""
     if field_key != "voice":
         return ()
-    here = installed()
+    here = [v for v in installed() if language_of(v).startswith("en")]
     cat = catalog()
     if not cat:
         return tuple(here)
-    rest = [v for v in sorted(cat) if v not in here]
+    rest = [v for v in sorted(cat) if v not in here and language_of(v).startswith("en")]
     return tuple(here) + tuple(rest)

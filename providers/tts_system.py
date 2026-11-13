@@ -172,6 +172,7 @@ def _read_voices() -> list[str]:
                         "Add-Type -AssemblyName System.Speech; "
                         "(New-Object System.Speech.Synthesis.SpeechSynthesizer)"
                         ".GetInstalledVoices() | "
+                        "Where-Object { $_.VoiceInfo.Culture.TwoLetterISOLanguageName -eq 'en' } | "
                         "ForEach-Object { $_.VoiceInfo.Name }"], timeout=20)
             return [l.strip() for l in
                     out.stdout.decode("utf-8", "replace").splitlines() if l.strip()]
@@ -180,10 +181,12 @@ def _read_voices() -> list[str]:
             out = _run(["say", "-v", "?"], timeout=20)
             names = []
             for line in out.stdout.decode("utf-8", "replace").splitlines():
-                # "Alice               it_IT    # Salve, mi chiamo Alice"
-                name = line.split("  ")[0].strip()
-                if name:
-                    names.append(name)
+                # "Alice               en_US    # Hello, my name is Alice"
+                parts = line.split()
+                if len(parts) >= 2 and parts[1].lower().startswith("en"):
+                    name = line.split("  ")[0].strip()
+                    if name:
+                        names.append(name)
             return names
 
         # Linux
@@ -193,7 +196,7 @@ def _read_voices() -> list[str]:
             names = []
             for line in out.stdout.decode("utf-8", "replace").splitlines()[1:]:
                 cols = line.split()
-                if len(cols) >= 4:
+                if len(cols) >= 4 and cols[1].lower().startswith("en"):
                     names.append(cols[3])
             return sorted(set(names))
         return []
@@ -217,7 +220,11 @@ def engine_name() -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 class SystemTTS:
     def __init__(self, cfg: dict):
-        self.voice = (cfg.get("voice") or "").strip()
+        raw_voice = (cfg.get("voice") or "").strip()
+        known = list_voices()
+        if raw_voice and known and raw_voice not in known:
+            raw_voice = known[0] if known else ""
+        self.voice = raw_voice
         self.rate = int(cfg.get("rate") or 0)        # -10..10 on Windows
         self.caps = dict(DEFAULT_CAPS)
         self.caps["audio_out"] = True

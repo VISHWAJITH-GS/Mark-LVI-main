@@ -18,6 +18,7 @@ google-genai>=2.8.0,<3
 # directly, and a package you import is a package you depend on — relying on
 # somebody else's transitive dependency works right up until they drop it.
 httpx>=0.27,<1
+keyring>=24.0,<26
 
 # ── Web search & browser control ──────────────────────────────────────────────
 requests>=2.31,<3
@@ -27,19 +28,12 @@ playwright>=1.40,<2
 # ── Video on the HUD ──────────────────────────────────────────────────────────
 # Qt plays local files and direct media URLs on its own — QtMultimedia comes
 # with PyQt6, so the player itself costs nothing. A YouTube page is not a video
-# file, though, and yt-dlp is what turns one into a stream Qt can play. Without
-# it the HUD still plays files and URLs, and YouTube links open in the browser
-# with an explanation instead of failing.
-#
-# Deliberately UNBOUNDED, unlike everything else here. YouTube changes what it
-# serves without notice and yt-dlp answers with a release; an upper bound would
-# eventually pin a fresh clone to a version YouTube has already broken, which is
-# the opposite of what bounds are for. Keep it current: pip install -U yt-dlp
-yt-dlp
+# file, though, and yt-dlp is what turns one into a stream Qt can play.
+yt-dlp>=2024.1.1
 
 # ── Automation / input control ────────────────────────────────────────────────
-pyautogui
-pyperclip
+pyautogui>=0.9.50,<1
+pyperclip>=1.8.0,<2
 
 # ── Vision & media ────────────────────────────────────────────────────────────
 pillow>=10,<13

@@ -193,40 +193,11 @@ def browser_profile(parameters: Optional[dict] = None, **kwargs: Any) -> str:
         return outcome.failed("browser_profile", f"Unknown action '{action}'. Supported: select_profile, detect.")
 
 
-TOOL = {
+# TOOL disconnected — deprecated in favor of direct live Edge CDP attachment
+_DEPRECATED_TOOL = {
     "name": "browser_profile",
-    "description": (
-        "Selects or switches to a native browser profile (e.g. 'Student', 'Official', 'Personal') "
-        "in Microsoft Edge or Google Chrome. Handles the 'Who's using Chrome/Edge?' profile chooser "
-        "or switches profiles via Windows UI Automation and demonstrated coordinates."
-    ),
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "action": {
-                "type": "STRING",
-                "description": "The profile action: 'select_profile' or 'detect'. Default is 'select_profile'.",
-                "enum": ["select_profile", "detect"],
-            },
-            "profile_name": {
-                "type": "STRING",
-                "description": "The exact or partial name of the profile to switch to (e.g. 'Student', 'student.tce.edu').",
-            },
-            "browser": {
-                "type": "STRING",
-                "description": "Target browser: 'edge' or 'chrome'.",
-            },
-            "x": {
-                "type": "INTEGER",
-                "description": "Optional X coordinate from demonstration for direct coordinate selection fallback.",
-            },
-            "y": {
-                "type": "INTEGER",
-                "description": "Optional Y coordinate from demonstration for direct coordinate selection fallback.",
-            },
-        },
-        "required": ["profile_name"],
-    },
+    "description": "Deprecated.",
+    "parameters": {"type": "OBJECT", "properties": {}},
     "handler": browser_profile,
 }
 

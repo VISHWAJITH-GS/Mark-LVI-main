@@ -1618,6 +1618,7 @@ def dev_agent(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "dev_agent",
+    "permission": "sensitive",
     "description": (
         "The coding agent, running on the user's chosen coding model. "
         "mode='improve' changes an EXISTING project folder — the uploaded one or "

@@ -106,17 +106,16 @@ def request(key: str, title: str, detail: str, run: Callable[[], str]) -> str:
 
     _log(f"SYS: Awaiting confirmation — {title}")
     return (
-        f"[CONFIRMATION_PENDING] I have put a confirmation on screen for: {title}. "
-        f"Say ONE short sentence in the user's own language telling them you need "
-        f"them to confirm it on the HUD before you do it. Do not claim it is done."
+        f"[CONFIRMATION_PENDING] Shall I proceed with {title}? "
+        f"Please answer yes to confirm, or no to cancel."
     )
 
 
 def resolve(accepted: bool) -> None:
-    """Called by the UI when the user presses CONFIRM or CANCEL.
+    """Called by the UI when the user presses CONFIRM or CANCEL, or by voice recognition.
 
     Runs the stored callable on a worker thread — this is invoked from the Qt
-    thread, and shutting the machine down from inside a button handler would
+    thread or voice thread, and shutting the machine down from inside a button handler would
     freeze the interface on its way out."""
     global _pending
 
@@ -140,6 +139,13 @@ def resolve(accepted: bool) -> None:
         _log(f"SYS: Cancelled — {p.title}")
         return
 
+    # Record sensitive approval for balanced trust level session
+    try:
+        from core.permissions import approve_sensitive_action_for_session
+        approve_sensitive_action_for_session(p.key)
+    except Exception:
+        pass
+
     def _worker():
         try:
             result = p.run() or "Done."
@@ -149,6 +155,28 @@ def resolve(accepted: bool) -> None:
 
     threading.Thread(target=_worker, daemon=True,
                      name=f"confirm-{p.key}").start()
+
+
+def resolve_by_voice(utterance: str) -> Optional[bool]:
+    """Inspects a user voice utterance when confirmation is pending.
+    
+    Returns True if confirmed, False if rejected, or None if unrecognized.
+    """
+    if not pending_title():
+        return None
+    import re
+    clean = str(utterance or "").lower().strip()
+    yes_words = {"yes", "confirm", "proceed", "sure", "do it", "approved", "go ahead", "okay", "ok"}
+    no_words = {"no", "cancel", "stop", "abort", "don't", "dont", "never mind", "negative"}
+
+    words = set(re.findall(r"\w+", clean))
+    if words & yes_words:
+        resolve(True)
+        return True
+    if words & no_words:
+        resolve(False)
+        return False
+    return None
 
 
 def pending_title() -> str:

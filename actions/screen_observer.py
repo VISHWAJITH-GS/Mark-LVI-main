@@ -78,7 +78,10 @@ class ScreenObservation:
         else:
             lines.append("Visible Controls: [None directly indexed in active tree]")
 
-        return "\n".join(lines)
+        from core import outcome
+        from core.permissions import set_untrusted_context
+        set_untrusted_context(True)
+        return outcome.untrusted("screen", "\n".join(lines))
 
 
 class ScreenObserver:

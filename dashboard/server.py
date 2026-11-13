@@ -12,6 +12,9 @@ Install deps:  pip install fastapi "uvicorn[standard]" cryptography
 import asyncio
 import base64
 import hashlib
+import hmac
+import ipaddress
+import logging
 import re
 import secrets
 import socket
@@ -19,6 +22,41 @@ import string
 import threading
 import time
 from pathlib import Path
+
+# Set up structured logger with secret redaction
+_logger = logging.getLogger("jarvis.dashboard")
+if not _logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("[Dashboard] %(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+    _logger.addHandler(_handler)
+_logger.setLevel(logging.INFO)
+
+
+def _log_info(msg: str) -> None:
+    try:
+        from memory.config_manager import redact_secret
+        msg = redact_secret(str(msg))
+    except Exception:
+        pass
+    _logger.info(msg)
+
+
+def _log_warning(msg: str) -> None:
+    try:
+        from memory.config_manager import redact_secret
+        msg = redact_secret(str(msg))
+    except Exception:
+        pass
+    _logger.warning(msg)
+
+
+def _log_error(msg: str) -> None:
+    try:
+        from memory.config_manager import redact_secret
+        msg = redact_secret(str(msg))
+    except Exception:
+        pass
+    _logger.error(msg)
 
 _DEPS_OK = False
 try:
@@ -389,8 +427,9 @@ def _ensure_network_access(*ports: int) -> None:
 
         # ── Try running directly (succeeds when already admin) ────────────────
         try:
+            cmd_exe = os.environ.get("COMSPEC", "cmd.exe")
             r = subprocess.run(
-                [bat_path], capture_output=True, timeout=8, shell=True
+                [cmd_exe, "/c", bat_path], capture_output=True, timeout=8, shell=False
             )
             if r.returncode == 0:
                 print(f"[Dashboard] Firewall configured for {', '.join(str(pt) for pt in ports)}.")
@@ -542,8 +581,11 @@ def _ensure_network_access(*ports: int) -> None:
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _local_ip() -> str:
-    """Return the best LAN-facing IPv4 address, no internet required."""
-    # Method 1: route trick (fast, works when internet is available)
+    """Return the best LAN-facing IPv4 address if LAN is enabled, otherwise loopback."""
+    from memory.config_manager import get_dashboard_allow_lan
+    if not get_dashboard_allow_lan():
+        return "127.0.0.1"
+
     for probe in ("8.8.8.8", "1.1.1.1", "192.168.1.1"):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -556,7 +598,6 @@ def _local_ip() -> str:
         except Exception:
             pass
 
-    # Method 2: hostname resolution (works offline on most systems)
     try:
         ip = socket.gethostbyname(socket.gethostname())
         if not ip.startswith("127."):
@@ -564,7 +605,6 @@ def _local_ip() -> str:
     except Exception:
         pass
 
-    # Method 3: enumerate all interfaces (fully offline, no external deps)
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
             ip = info[4][0]
@@ -574,6 +614,30 @@ def _local_ip() -> str:
         pass
 
     return "127.0.0.1"
+
+
+def _is_allowed_ip(ip_str: str) -> bool:
+    """Check if client IP address is allowed under the current dashboard policy."""
+    if not ip_str or ip_str == "unknown":
+        return False
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return False
+
+    from memory.config_manager import get_dashboard_allow_lan, get_dashboard_allowed_subnets
+    if not get_dashboard_allow_lan():
+        return ip.is_loopback
+
+    allowed_subnets = get_dashboard_allowed_subnets()
+    for subnet_str in allowed_subnets:
+        try:
+            net = ipaddress.ip_network(subnet_str, strict=False)
+            if ip in net:
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 def _ensure_certs() -> bool:
@@ -678,19 +742,19 @@ def _read(name: str) -> str:
 # space, but "large" is not the same as "let them try forever": the point of a
 # limit is that an attacker's cost grows while a person who mistypes their key
 # twice never notices it exists.
-_TOKEN_TTL_SECONDS = 12 * 3600
+# Short-lived token lifetime: 1 hour (3600 seconds)
+_TOKEN_TTL_SECONDS = 3600
 _LOGIN_MAX_TRIES   = 6
 _LOGIN_WINDOW      = 300.0      # seconds the counter looks back over
 _LOGIN_LOCKOUT     = 300.0      # seconds an address waits after using them up
+_BACKOFF           = [0.0, 1.0, 2.0, 5.0, 15.0, 30.0]
 
 
 class _Throttle:
-    """Failed-attempt counter, per client address.
+    """Failed-attempt counter, per client address with exponential backoff.
 
-    Deliberately tiny and in memory: it protects a pairing key that is itself
-    only alive for ten minutes, so nothing here needs to survive a restart.
-    Successful logins clear the count, which keeps a household on one address
-    from locking itself out because somebody fumbled the code once.
+    Deliberately in memory: protects pairing key and rate-limits login attempts.
+    Successful logins clear the count.
     """
 
     def __init__(self):
@@ -698,14 +762,18 @@ class _Throttle:
         self._lock = threading.Lock()
 
     def blocked_for(self, who: str) -> float:
-        """Seconds this address must wait, or 0."""
+        """Seconds this address must wait under exponential backoff policy, or 0."""
         now = time.time()
         with self._lock:
             tries = [t for t in self._fails.get(who, []) if now - t < _LOGIN_WINDOW]
             self._fails[who] = tries
-            if len(tries) < _LOGIN_MAX_TRIES:
+            n = len(tries)
+            if n == 0:
                 return 0.0
-            return max(0.0, _LOGIN_LOCKOUT - (now - tries[-1]))
+            if n >= _LOGIN_MAX_TRIES:
+                return max(0.0, _LOGIN_LOCKOUT - (now - tries[-1]))
+            delay = _BACKOFF[min(n - 1, len(_BACKOFF) - 1)]
+            return max(0.0, delay - (now - tries[-1]))
 
     def record_failure(self, who: str) -> None:
         with self._lock:
@@ -733,6 +801,8 @@ class DashboardServer:
         self._pending_keys: dict[str, float] = {}
         self._throttle                    = _Throttle()
         self._device_sessions: dict[str, dict] = {}  # device_token → {session_key}
+        self._device_tokens: dict[str, dict]   = {}  # dev_tok -> metadata
+        self._revoked_tokens: set[str]         = set()
         self._phone_audio_queue: asyncio.Queue    = asyncio.Queue(maxsize=200)
         self._uploads_dir                 = UPLOADS_DIR
         # Set by serve() when the port could not be taken, so the UI can say
@@ -847,10 +917,27 @@ class DashboardServer:
     def _build_app(self) -> "FastAPI":
         app = FastAPI(docs_url=None, redoc_url=None)
 
+        def _who(req: Request) -> str:
+            """The client address a throttle counts against."""
+            return (getattr(getattr(req, "client", None), "host", "") or "unknown")
+
+        @app.middleware("http")
+        async def security_and_network_middleware(req: Request, call_next):
+            client_ip = _who(req)
+            if not _is_allowed_ip(client_ip):
+                return JSONResponse({"error": "Forbidden: IP not allowed"}, status_code=403)
+            response = await call_next(req)
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: ws: wss:;"
+            )
+            return response
+
         def _valid(tok: str) -> bool:
-            """Is this token live? Expired ones are dropped as they are found,
-            which keeps the sweep free and needs no background timer."""
-            if not tok:
+            """Is this token live? Expired or revoked ones are dropped."""
+            if not tok or tok in self._revoked_tokens:
                 return False
             issued = self._tokens.get(tok)
             if issued is None:
@@ -861,13 +948,34 @@ class DashboardServer:
                 return False
             return True
 
-        def _auth(req: Request) -> bool:
-            return _valid(req.headers.get("authorization", "")
-                          .removeprefix("Bearer ").strip())
+        def _extract_token(req: Request) -> str:
+            # 1. Check HttpOnly cookie
+            cookie_tok = req.cookies.get("jarvis_auth_token", "").strip()
+            if cookie_tok:
+                return cookie_tok
+            # 2. Check Authorization Bearer header
+            auth_header = req.headers.get("authorization", "").strip()
+            if auth_header.lower().startswith("bearer "):
+                return auth_header[7:].strip()
+            return ""
 
-        def _who(req: Request) -> str:
-            """The client address a throttle counts against."""
-            return (getattr(getattr(req, "client", None), "host", "") or "unknown")
+        def _auth(req: Request) -> bool:
+            return _valid(_extract_token(req))
+
+        @app.get("/health")
+        async def health_check():
+            """Health check endpoint reporting service, security, and runtime status."""
+            from memory.config_manager import get_dashboard_allow_lan
+            tls_active = getattr(self, "_use_ssl", False)
+            active_sessions = len(self._tokens)
+            return JSONResponse({
+                "status": "healthy",
+                "service": "JARVIS Dashboard",
+                "timestamp": time.time(),
+                "tls_enabled": tls_active,
+                "active_sessions": active_sessions,
+                "allow_lan": get_dashboard_allow_lan(),
+            })
 
         @app.get("/login", response_class=HTMLResponse)
         async def login_page():
@@ -875,9 +983,6 @@ class DashboardServer:
 
         @app.get("/", response_class=HTMLResponse)
         async def index():
-            # Auth is handled client-side via sessionStorage bearer token.
-            # Server-side header auth can't work here because browser navigations
-            # don't send custom headers (location.href doesn't carry Authorization).
             html = (self._app_html
                     .replace("__IP__", self._ip)
                     .replace("__PORT__", str(PORT)))
@@ -888,9 +993,6 @@ class DashboardServer:
             who  = _who(req)
             wait = self._throttle.blocked_for(who)
             if wait > 0:
-                # 429 rather than 401 on purpose: it tells an honest user why
-                # their correct key was refused, and it tells a script that
-                # guessing is not working.
                 return JSONResponse(
                     {"ok": False,
                      "error": f"Too many attempts. Try again in "
@@ -900,20 +1002,43 @@ class DashboardServer:
             body    = await req.json()
             entered = str(body.get("pin", "")).strip().upper()
             now     = time.time()
-            if entered in self._pending_keys and self._pending_keys[entered] > now:
+
+            matched_key = None
+            for key, exp in list(self._pending_keys.items()):
+                if exp > now and hmac.compare_digest(entered, key):
+                    matched_key = key
+                    break
+
+            if matched_key is not None:
                 self._throttle.clear(who)
-                del self._pending_keys[entered]          # one-time use
+                del self._pending_keys[matched_key]
                 tok = secrets.token_urlsafe(32)
+                dev_tok = secrets.token_urlsafe(32)
                 self._tokens[tok] = time.time()
-                self._token_keys[tok] = entered
-                self._aes_key(entered)                   # pre-derive & cache
+                self._token_keys[tok] = matched_key
+                self._aes_key(matched_key)
+                self._device_sessions[dev_tok] = {
+                    "session_key": matched_key,
+                    "created_at": time.time(),
+                    "ip": who,
+                    "device_id": dev_tok[:8],
+                }
                 if self._connect_callback:
                     self._connect_callback()
                 asyncio.create_task(self.broadcast(
                     {"type": "sys", "text": "Remote connection established."}
                 ))
-                # Bearer token in response body — no cookies needed (works on any browser/HTTP)
-                return JSONResponse({"ok": True, "token": tok})
+                resp = JSONResponse({"ok": True, "token": tok, "device_token": dev_tok})
+                resp.set_cookie(
+                    key="jarvis_auth_token",
+                    value=tok,
+                    httponly=True,
+                    samesite="strict",
+                    secure=self._ssl_enabled(),
+                    max_age=_TOKEN_TTL_SECONDS,
+                )
+                return resp
+
             self._throttle.record_failure(who)
             return JSONResponse({"ok": False, "error": "Invalid or expired key"},
                                 status_code=401)
@@ -922,7 +1047,14 @@ class DashboardServer:
         async def auto_login(key: str = ""):
             """QR code target — validates one-time key, creates session, redirects phone."""
             now = time.time()
-            if not key or key not in self._pending_keys or self._pending_keys[key] <= now:
+            clean_key = str(key).strip().upper()
+            matched_key = None
+            for k, exp in list(self._pending_keys.items()):
+                if exp > now and hmac.compare_digest(clean_key, k):
+                    matched_key = k
+                    break
+
+            if not matched_key:
                 return HTMLResponse("""<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width">
 <style>
@@ -934,13 +1066,18 @@ class DashboardServer:
 <p>Press <strong style="color:#dde3ed">Remote Control</strong> in JARVIS to get a new QR code.</p>
 </div></body></html>""")
 
-            del self._pending_keys[key]
+            del self._pending_keys[matched_key]
             tok     = secrets.token_urlsafe(32)
             dev_tok = secrets.token_urlsafe(32)
             self._tokens[tok] = time.time()
-            self._token_keys[tok] = key
-            self._aes_key(key)
-            self._device_sessions[dev_tok] = {"session_key": key}
+            self._token_keys[tok] = matched_key
+            self._aes_key(matched_key)
+            self._device_sessions[dev_tok] = {
+                "session_key": matched_key,
+                "created_at": time.time(),
+                "ip": "qr_client",
+                "device_id": dev_tok[:8],
+            }
 
             if self._connect_callback:
                 self._connect_callback()
@@ -948,7 +1085,7 @@ class DashboardServer:
                 {"type": "sys", "text": "Remote connection established via QR code."}
             ))
 
-            return HTMLResponse(f"""<!DOCTYPE html>
+            resp = HTMLResponse(f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width">
 <style>
   body{{background:#07090f;color:#dde3ed;font-family:sans-serif;
@@ -958,12 +1095,21 @@ class DashboardServer:
 <body>
 <script>
   sessionStorage.setItem('jarvis_token','{tok}');
-  sessionStorage.setItem('jarvis_key','{key}');
+  sessionStorage.setItem('jarvis_key','{matched_key}');
   localStorage.setItem('jarvis_device_token','{dev_tok}');
   setTimeout(function(){{location.replace('/')}},400);
 </script>
 <p>Connecting to JARVIS…</p>
 </body></html>""")
+            resp.set_cookie(
+                key="jarvis_auth_token",
+                value=tok,
+                httponly=True,
+                samesite="strict",
+                secure=self._ssl_enabled(),
+                max_age=_TOKEN_TTL_SECONDS,
+            )
+            return resp
 
         @app.post("/api/device-login")
         async def device_login_ep(req: Request):
@@ -973,9 +1119,14 @@ class DashboardServer:
             except Exception:
                 return JSONResponse({"ok": False}, status_code=400)
             dev_tok = (body.get("device_token") or "").strip()
-            if not dev_tok or dev_tok not in self._device_sessions:
+            matched_sess = None
+            for dt, sess in list(self._device_sessions.items()):
+                if hmac.compare_digest(dev_tok, dt):
+                    matched_sess = sess
+                    break
+            if not matched_sess:
                 return JSONResponse({"ok": False}, status_code=401)
-            session_key = self._device_sessions[dev_tok]["session_key"]
+            session_key = matched_sess["session_key"]
             tok = secrets.token_urlsafe(32)
             self._tokens[tok] = time.time()
             self._token_keys[tok] = session_key
@@ -985,39 +1136,75 @@ class DashboardServer:
             asyncio.create_task(self.broadcast(
                 {"type": "sys", "text": "Known device reconnected automatically."}
             ))
-            return JSONResponse({"ok": True, "token": tok, "key": session_key})
+            resp = JSONResponse({"ok": True, "token": tok, "key": session_key})
+            resp.set_cookie(
+                key="jarvis_auth_token",
+                value=tok,
+                httponly=True,
+                samesite="strict",
+                secure=self._ssl_enabled(),
+                max_age=_TOKEN_TTL_SECONDS,
+            )
+            return resp
+
+        @app.get("/api/devices")
+        async def list_devices_ep(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            devices = [
+                {
+                    "device_id": info.get("device_id", d_tok[:8]),
+                    "created_at": info.get("created_at", 0),
+                    "ip": info.get("ip", "unknown"),
+                    "token_prefix": d_tok[:6] + "...",
+                }
+                for d_tok, info in self._device_sessions.items()
+            ]
+            return JSONResponse({"ok": True, "devices": devices})
+
+        @app.post("/api/devices/revoke")
+        async def revoke_devices_ep(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            try:
+                body = await req.json()
+            except Exception:
+                body = {}
+            target_id = body.get("device_id")
+            target_token = body.get("device_token")
+
+            mine = _extract_token(req)
+            if target_id or target_token:
+                revoked = 0
+                for d_tok, info in list(self._device_sessions.items()):
+                    if (target_token and hmac.compare_digest(target_token, d_tok)) or (target_id and info.get("device_id") == target_id):
+                        self._device_sessions.pop(d_tok, None)
+                        revoked += 1
+                return JSONResponse({"ok": True, "revoked": revoked})
+
+            # Revoke all devices
+            count = len(self._device_sessions)
+            self._device_sessions.clear()
+            live = 0
+            for t in list(self._tokens.keys()):
+                if not hmac.compare_digest(t, mine):
+                    self._revoked_tokens.add(t)
+                    self._tokens.pop(t, None)
+                    self._token_keys.pop(t, None)
+                    live += 1
+            return JSONResponse({"ok": True, "revoked": count, "sessions_ended": live})
 
         @app.post("/api/revoke-devices")
         async def revoke_devices(req: Request):
-            """Invalidate all persistent device tokens (admin action)."""
-            if not _auth(req):
-                return JSONResponse({"error": "Unauthorized"}, status_code=401)
-            # ALSO drop the live tokens, which this did not do.
-            #
-            # It cleared the remembered devices and left every session those
-            # devices had already opened working until the app restarted — so
-            # "revoke all devices" revoked nothing anybody was currently using,
-            # which is the one case somebody presses it for.
-            #
-            # The caller's own token is kept, or pressing the button would log
-            # out the person who pressed it.
-            mine  = req.headers.get("authorization", "").removeprefix("Bearer ").strip()
-            count = len(self._device_sessions)
-            live  = len(self._tokens) - (1 if mine in self._tokens else 0)
-            self._device_sessions.clear()
-            keep = self._tokens.get(mine)
-            self._tokens.clear()
-            self._token_keys = {k: v for k, v in self._token_keys.items() if k == mine}
-            if keep is not None:
-                self._tokens[mine] = keep
-            return JSONResponse({"ok": True, "revoked": count, "sessions_ended": live})
+            """Legacy compatibility endpoint."""
+            return await revoke_devices_ep(req)
 
         @app.post("/api/command")
         async def command(req: Request):
             if not _auth(req):
                 return JSONResponse({"error": "Unauthorized"}, status_code=401)
             body  = await req.json()
-            token = req.headers.get("authorization", "").removeprefix("Bearer ").strip()
+            token = _extract_token(req)
             enc   = body.get("enc", "")
             if enc:
                 text = self._decrypt(token, enc)
@@ -1411,7 +1598,9 @@ class DashboardServer:
                 f"https://{self._ip}:{SECURE_PORT}/{path}{query}",
                 status_code=307)
 
-        cfg = uvicorn.Config(bounce, host="0.0.0.0", port=PORT,
+        from memory.config_manager import get_dashboard_allow_lan
+        bind_host = "0.0.0.0" if get_dashboard_allow_lan() else "127.0.0.1"
+        cfg = uvicorn.Config(bounce, host=bind_host, port=PORT,
                              log_level="warning")
         print(f"[Dashboard] Type by hand:  {self._ip}:{PORT}  "
               f"(sends you to the secure page)")
@@ -1466,8 +1655,10 @@ class DashboardServer:
                   'config/api_keys.json (your phone will ask you to trust the '
                   'certificate once).')
 
+        from memory.config_manager import get_dashboard_allow_lan
+        bind_host = "0.0.0.0" if get_dashboard_allow_lan() else "127.0.0.1"
         cfg = uvicorn.Config(
-            self.app, host="0.0.0.0",
+            self.app, host=bind_host,
             port=SECURE_PORT if use_ssl else PORT, log_level="warning",
             **({"ssl_keyfile": str(ssl_key), "ssl_certfile": str(ssl_cert)}
                if use_ssl else {}),
@@ -1489,7 +1680,7 @@ class DashboardServer:
         # being tested for, so setting it made the probe always succeed.
         _probe = _socket.socket()
         try:
-            _probe.bind(("0.0.0.0", SECURE_PORT if use_ssl else PORT))
+            _probe.bind((bind_host, SECURE_PORT if use_ssl else PORT))
         except OSError as exc:
             _probe.close()
             self._bind_error = (

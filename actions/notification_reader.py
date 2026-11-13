@@ -300,7 +300,9 @@ def notification_center(parameters: dict = None, player=None, **kwargs) -> str:
     if player and hasattr(player, "write_log"):
         player.write_log(f"[Notifications] 🔔 {res.message[:60]}…")
 
-    return res.to_speech_text()
+    from core.permissions import set_untrusted_context
+    set_untrusted_context(True)
+    return outcome.untrusted("notifications", res.to_speech_text())
 
 
 TOOL = {

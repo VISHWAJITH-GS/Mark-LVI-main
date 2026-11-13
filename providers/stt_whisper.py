@@ -82,15 +82,15 @@ class WhisperSTT:
         self.backend = (cfg.get("backend") or "local").strip().lower()
         self.model_name = (cfg.get("model") or DEFAULT_MODEL).strip()
         self.device = (cfg.get("device") or "cpu").strip().lower()
-        self.language = (cfg.get("language") or "").strip()
+        # English only policy: no auto-detect, no translation step
+        raw_lang = (cfg.get("language") or "").strip().lower()
+        self.language = raw_lang if raw_lang.startswith("en") else "en"
         self.base_url = (cfg.get("base_url") or "").strip()
         self.api_key = (cfg.get("api_key") or "").strip()
         self.download_root = (cfg.get("download_root") or "").strip() or None
         self._model = None
         self._load_lock = asyncio.Lock()
-        # Set by each recognition: the language Whisper heard, as a code like
-        # "tr". Empty until something has been said.
-        self.detected_language = ""
+        self.detected_language = "en"
         self.caps = dict(DEFAULT_CAPS)
 
     # ── local ────────────────────────────────────────────────────────────────
@@ -137,7 +137,8 @@ class WhisperSTT:
     def _transcribe_blocking(self, samples) -> str:
         segments, info = self._model.transcribe(
             samples,
-            language=self.language or None,     # None = detect it
+            language="en",
+            task="transcribe",
             beam_size=1,          # greedy: a voice command is short and beam
                                   # search costs multiples of the time for an
                                   # accuracy gain that does not show up here
@@ -149,11 +150,7 @@ class WhisperSTT:
         )
         # The work happens HERE — `segments` is a generator.
         text = " ".join(s.text.strip() for s in segments).strip()
-        self._accept_language(
-            str(getattr(info, "language", "") or ""),
-            float(getattr(info, "language_probability", 0.0) or 0.0),
-            text,
-        )
+        self.detected_language = "en"
         return text
 
     # How sure Whisper has to be, and how much it has to have heard, before the
@@ -209,9 +206,7 @@ class WhisperSTT:
         base = _normalise(self.base_url)
         wav = audio.to_wav(pcm, rate=sample_rate)
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
-        data = {"model": self.model_name, "response_format": "json"}
-        if self.language:
-            data["language"] = self.language
+        data = {"model": self.model_name, "response_format": "json", "language": "en"}
         with httpx.Client(timeout=60.0, trust_env=not _is_loopback(base)) as cl:
             r = cl.post(f"{base}/audio/transcriptions", headers=headers,
                         data=data,

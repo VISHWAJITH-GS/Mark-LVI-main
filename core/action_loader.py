@@ -275,12 +275,11 @@ def _call_handler(fn: Callable, parameters: dict, ctx: dict) -> str:
         return fn(**clean_args, **kwargs)
 
 
-def _validate(module, filename: str) -> ActionRecord:
+def _validate_tool(tool: dict, filename: str) -> ActionRecord:
     """Returns an ActionRecord; .valid=False + .error set on any problem. Never raises."""
-    tool = getattr(module, "TOOL", None)
     if not isinstance(tool, dict):
         return ActionRecord(name=Path(filename).stem, file=filename,
-                            error="No module-level TOOL dict (not a discoverable action).")
+                            error="TOOL must be a dict.")
 
     name = tool.get("name")
     if not isinstance(name, str) or not _NAME_RE.match(name):
@@ -302,20 +301,37 @@ def _validate(module, filename: str) -> ActionRecord:
         return ActionRecord(name=name, file=filename,
                             error="TOOL['handler'] missing or not callable.")
 
+    perm = tool.get("permission")
+    if not perm:
+        from core.permissions import ACTION_PERMISSIONS, SENSITIVE
+        perm = ACTION_PERMISSIONS.get(name)
+        if not perm:
+            perm = SENSITIVE
+    elif perm not in ("read_only", "normal", "sensitive", "destructive"):
+        return ActionRecord(name=name, file=filename,
+                            error=f"TOOL['permission'] '{perm}' is invalid. Must be read_only, normal, sensitive, or destructive.")
+
     return ActionRecord(name=name, description=description.strip(), parameters=parameters,
                         handler=handler, file=filename, valid=True, error="",
+                        permission=perm,
                         behavior=_opt_upper(tool.get("behavior"), _BEHAVIORS),
                         scheduling=_opt_upper(tool.get("scheduling"), _SCHEDULING),
                         tier=_opt_tier(tool.get("tier")),
                         brief=_opt_text(tool.get("brief")))
 
 
+def _validate(module, filename: str) -> ActionRecord:
+    """Legacy module validator: delegates to _validate_tool for getattr(module, 'TOOL')."""
+    tool = getattr(module, "TOOL", None)
+    return _validate_tool(tool, filename)
+
+
 def discover_actions(actions_dir: Path, reserved_names: set[str] | None = None,
                      logger: Callable[[str], None] = print) -> ActionRegistry:
     """
     Scans actions_dir for *.py files (skips files starting with '_'). A file is
-    only treated as an action if it exposes a module-level TOOL dict; files
-    without one (shared helpers, capture-only modules) are silently ignored.
+    only treated as an action if it exposes a module-level TOOL dict or TOOLS list;
+    files without one (shared helpers, capture-only modules) are silently ignored.
     Import/validation errors and name collisions are logged and the file is
     skipped — they NEVER raise out of this function.
     """
@@ -345,34 +361,43 @@ def discover_actions(actions_dir: Path, reserved_names: set[str] | None = None,
                     sys.modules.pop(module_name, None)
                     raise
 
-            if getattr(module, "TOOL", None) is None:
+            tools_list: list[dict] = []
+            if hasattr(module, "TOOLS") and isinstance(module.TOOLS, list):
+                tools_list = [t for t in module.TOOLS if isinstance(t, dict)]
+            elif hasattr(module, "TOOL") and isinstance(module.TOOL, dict):
+                tools_list = [module.TOOL]
+            else:
                 continue   # not an action file — a helper/capture-only module
 
-            rec = _validate(module, path.name)
+            for tool_dict in tools_list:
+                rec = _validate_tool(tool_dict, path.name)
 
-            if rec.valid and rec.name in reserved:
-                rec = ActionRecord(name=rec.name, file=path.name,
-                                   error=f"Name '{rec.name}' collides with a reserved core tool — rejected.")
-            elif rec.valid and rec.name in valid:
-                other = valid[rec.name].file
-                rec = ActionRecord(name=rec.name, file=path.name,
-                                   error=f"Name '{rec.name}' already used by action '{other}' — rejected.")
+                if rec.valid and rec.name in reserved:
+                    rec = ActionRecord(name=rec.name, file=path.name,
+                                       error=f"Name '{rec.name}' collides with a reserved core tool — rejected.")
+                elif rec.valid and rec.name in valid:
+                    other = valid[rec.name].file
+                    rec = ActionRecord(name=rec.name, file=path.name,
+                                       error=f"Name '{rec.name}' already used by action '{other}' — rejected.")
+
+                all_records.append(rec)
+                if rec.valid:
+                    valid[rec.name] = rec
+                    logger(f"Action loaded: {rec.name} ({path.name})")
+                else:
+                    logger(f"Action rejected: {path.name} — {rec.error}")
 
         except Exception as e:
             rec = ActionRecord(name=path.stem, file=path.name,
                                error=f"Failed to load: {e}")
             traceback.print_exc()
-
-        all_records.append(rec)
-        if rec.valid:
-            valid[rec.name] = rec
-            logger(f"Action loaded: {rec.name} ({path.name})")
-        else:
-            # Only log a rejection if the file actually tried to be an action.
+            all_records.append(rec)
             logger(f"Action rejected: {path.name} — {rec.error}")
 
     registry = ActionRegistry(valid, logger)
     registry._all_records = all_records
+    logger(f"Action discovery complete: {len(valid)} active.")
+    return registry
     logger(f"Action discovery complete: {len(valid)} active.")
     return registry
 

@@ -210,6 +210,29 @@ def volume_set(value: int):
             capture_output=True)
         return
 
+def _adjust_xrandr_brightness(delta: float) -> None:
+    """Safely adjust display brightness via xrandr with shell=False."""
+    try:
+        r = subprocess.run(["xrandr", "--verbose"], capture_output=True, text=True, timeout=5)
+        if r.returncode != 0:
+            return
+        output_name = None
+        current_b = 1.0
+        for line in r.stdout.splitlines():
+            if " connected" in line:
+                output_name = line.split()[0].strip()
+            elif "Brightness:" in line and output_name:
+                try:
+                    current_b = float(line.split("Brightness:")[1].strip())
+                except ValueError:
+                    current_b = 1.0
+                break
+        if output_name and re.match(r"^[A-Za-z0-9_-]+$", output_name):
+            new_b = max(0.1, min(1.0, current_b + delta))
+            subprocess.run(["xrandr", "--output", output_name, "--brightness", f"{new_b:.2f}"], capture_output=True, timeout=5)
+    except Exception as e:
+        print(f"[Settings] xrandr adjustment error: {e}")
+
 def brightness_up():
     if _OS == "Darwin":
         subprocess.run(["osascript", "-e",
@@ -220,13 +243,7 @@ def brightness_up():
                 capture_output=True).returncode == 0:
             subprocess.run(["brightnessctl", "set", "+10%"], capture_output=True)
         else:
-            subprocess.run(
-                'xrandr --output $(xrandr | grep " connected" | head -1 | cut -d " " -f1)'
-                ' --brightness $(python3 -c "import subprocess; '
-                'b=float(subprocess.check_output([\"xrandr\",\"--verbose\"]).decode()'
-                '.split(\"Brightness:\")[1].split()[0]); print(min(1.0,b+0.1))")',
-                shell=True, capture_output=True
-            )
+            _adjust_xrandr_brightness(0.1)
     else:
         try:
             subprocess.run(
@@ -249,13 +266,7 @@ def brightness_down():
                 capture_output=True).returncode == 0:
             subprocess.run(["brightnessctl", "set", "10%-"], capture_output=True)
         else:
-            subprocess.run(
-                'xrandr --output $(xrandr | grep " connected" | head -1 | cut -d " " -f1)'
-                ' --brightness $(python3 -c "import subprocess; '
-                'b=float(subprocess.check_output([\"xrandr\",\"--verbose\"]).decode()'
-                '.split(\"Brightness:\")[1].split()[0]); print(max(0.1,b-0.1))")',
-                shell=True, capture_output=True
-            )
+            _adjust_xrandr_brightness(-0.1)
     else:
         try:
             subprocess.run(
@@ -607,6 +618,64 @@ def dark_mode():
         except Exception as e:
             print(f"[Settings] dark_mode Linux failed: {e}")
 
+def get_wifi_status() -> dict:
+    """Query whether Wi-Fi is turned on or turned off across platforms."""
+    if _OS == "Darwin":
+        try:
+            iface = _get_macos_wifi_interface()
+            res = subprocess.run(
+                ["networksetup", "-getairportpower", iface],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5
+            )
+            is_on = "On" in res.stdout
+            return {"found": True, "is_on": is_on, "state_str": "turned on" if is_on else "turned off"}
+        except Exception as e:
+            return {"found": False, "error": str(e), "state_str": "unknown"}
+    elif _OS == "Windows":
+        try:
+            ps = (
+                "$adapters = Get-NetAdapter; "
+                "$res = @(); "
+                "foreach ($a in $adapters) { "
+                "    $res += @{ "
+                "        Name = $a.Name; "
+                "        Status = $a.Status; "
+                "        InterfaceDescription = $a.InterfaceDescription; "
+                "        MediaType = $a.PhysicalMediaType "
+                "    } "
+                "}; "
+                "$res | ConvertTo-Json"
+            )
+            proc = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=8, **_WIN_HIDE)
+            data = json.loads(proc.stdout)
+            if isinstance(data, dict):
+                data = [data]
+            for item in data:
+                desc = (item.get("InterfaceDescription") or "").lower()
+                name = (item.get("Name") or "").lower()
+                media = str(item.get("MediaType") or "")
+                if "wi-fi" in name or "wireless" in desc or "802.11" in media or "wlan" in desc:
+                    status = item.get("Status", "Unknown")
+                    is_on = (status.lower() == "up")
+                    return {
+                        "found": True,
+                        "name": item.get("Name"),
+                        "status": status,
+                        "is_on": is_on,
+                        "state_str": "turned on" if is_on else "turned off"
+                    }
+        except Exception as e:
+            return {"found": False, "error": str(e), "state_str": "unknown"}
+    else:
+        try:
+            res = subprocess.run(["nmcli", "radio", "wifi"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
+            is_on = "enabled" in res.stdout
+            return {"found": True, "is_on": is_on, "state_str": "turned on" if is_on else "turned off"}
+        except Exception as e:
+            return {"found": False, "error": str(e), "state_str": "unknown"}
+    return {"found": False, "state_str": "not found"}
+
+
 def toggle_wifi():
     if _OS == "Darwin":
         iface = _get_macos_wifi_interface()
@@ -714,6 +783,8 @@ ACTION_MAP: dict[str, callable] = {
     "open_run":            open_run,
     "dark_mode":           dark_mode,
     "toggle_wifi":         toggle_wifi,
+    "wifi_status":         get_wifi_status,
+    "check_wifi":          get_wifi_status,
     "restart":             restart_computer,
     "shutdown":            shutdown_computer,
 }
@@ -776,6 +847,7 @@ _ALIASES = {
     "sleep_display":   ("screen off", "turn off the screen", "display off"),
     "dark_mode":       ("night mode", "light mode", "toggle theme"),
     "toggle_wifi":     ("wifi", "wi-fi", "internet off", "internet on"),
+    "wifi_status":     ("check wifi", "wifi status", "is wifi on", "is wifi turned on", "is wi-fi on", "is wifi off", "wifi turned on or off", "check my wifi"),
     "task_manager":    ("processes", "task list"),
     "screenshot":      ("capture screen", "take a screenshot", "snip"),
     "refresh_page":    ("refresh", "reload page"),
@@ -902,6 +974,15 @@ def computer_settings(
             key=action, title=title, detail=detail,
             run=lambda f=func, a=action: (f(), f"{a} done.")[1],
         )
+
+    if action in ("wifi_status", "check_wifi"):
+        st = get_wifi_status()
+        state_str = st.get("state_str", "unknown")
+        name = st.get("name", "Wi-Fi")
+        msg = f"Your {name} is currently {state_str}."
+        if player and hasattr(player, "show_content"):
+            player.show_content("Wi-Fi Status", msg)
+        return outcome.done("computer_settings", wanted=action, status=st, message=msg, verified=True)
 
     if action == "volume_set":
         try:

@@ -1623,6 +1623,7 @@ def windows_uia(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "windows_uia",
+    "permission": "normal",
     "description": (
         "Windows UI Automation: MUST be used whenever the user asks to open a folder or file "
         "in File Explorer (e.g. 'Semester 5', 'Downloads', 'Projects'), click any button, or type on Windows. "

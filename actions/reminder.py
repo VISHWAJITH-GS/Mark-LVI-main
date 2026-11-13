@@ -20,8 +20,10 @@ import os
 import platform
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
+import threading
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -40,19 +42,96 @@ def _base_dir() -> Path:
 
 
 def _reminders_dir() -> Path:
-    # Prefer project memory/reminders directory for reliable workspace persistence
-    d = _base_dir() / "memory" / "reminders"
+    """Return per-user reminders directory outside repository, migrating existing repo data if present."""
     try:
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        from memory.config_manager import get_user_data_dir
+        target_dir = get_user_data_dir() / "reminders"
     except Exception:
-        fallback = Path.home() / ".jarvis" / "reminders"
-        fallback.mkdir(parents=True, exist_ok=True)
-        return fallback
+        target_dir = Path.home() / ".jarvis" / "reminders"
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    # One-time migration: copy old repo-internal reminders_db.json to per-user directory if needed
+    legacy_file = _base_dir() / "memory" / "reminders" / "reminders_db.json"
+    target_file = target_dir / "reminders_db.json"
+    if legacy_file.exists() and not target_file.exists():
+        try:
+            target_file.write_text(legacy_file.read_text(encoding="utf-8"), encoding="utf-8")
+        except Exception:
+            pass
+
+    return target_dir
 
 
 def _db_path() -> Path:
+    return _reminders_dir() / "reminders.db"
+
+
+def _json_db_path() -> Path:
     return _reminders_dir() / "reminders_db.json"
+
+
+_rem_lock = threading.RLock()
+
+
+def _init_sqlite_db() -> None:
+    """Initialize SQLite database, apply schema migrations, and auto-migrate from JSON if present."""
+    p = _db_path()
+    with _rem_lock:
+        conn = sqlite3.connect(str(p), timeout=15)
+        try:
+            with conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS schema_version (
+                        version INTEGER PRIMARY KEY
+                    )
+                """)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS reminders (
+                        id TEXT PRIMARY KEY,
+                        task_name TEXT,
+                        message TEXT NOT NULL,
+                        due_time TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        recurrence TEXT NOT NULL DEFAULT 'none',
+                        created_at TEXT NOT NULL,
+                        completed_at TEXT,
+                        error TEXT
+                    )
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_status ON reminders(status)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_reminders_due_time ON reminders(due_time)")
+
+                # Auto-migration from reminders_db.json
+                json_p = _json_db_path()
+                if json_p.exists():
+                    try:
+                        cur = conn.cursor()
+                        cur.execute("SELECT COUNT(*) FROM reminders")
+                        count = cur.fetchone()[0]
+                        if count == 0:
+                            data = json.loads(json_p.read_text(encoding="utf-8"))
+                            for item in data:
+                                cur.execute("""
+                                    INSERT OR REPLACE INTO reminders 
+                                    (id, task_name, message, due_time, status, recurrence, created_at, completed_at, error)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """, (
+                                    item.get("id"),
+                                    item.get("task_name"),
+                                    item.get("message", ""),
+                                    item.get("due_time") or item.get("target_time", ""),
+                                    item.get("status", "pending"),
+                                    item.get("recurrence", "none"),
+                                    item.get("created_at", datetime.now().isoformat()),
+                                    item.get("completed_at"),
+                                    item.get("error")
+                                ))
+                            print(f"[Reminder] 🔒 Auto-migrated {len(data)} reminders from JSON to SQLite.")
+                    except Exception as me:
+                        print(f"[Reminder] ⚠️ JSON migration error: {me}")
+        finally:
+            conn.close()
 
 
 def _sanitise(text: str, max_len: int = 200) -> str:
@@ -67,28 +146,62 @@ def _sanitise(text: str, max_len: int = 200) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Local Persistence (Database)
+#  Local Persistence (SQLite Database with Atomic Transactions)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _load_db() -> List[dict]:
-    p = _db_path()
-    if not p.exists():
-        return []
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception as e:
-        print(f"[Reminder] DB load error: {e}")
-        return []
+    _init_sqlite_db()
+    with _rem_lock:
+        conn = sqlite3.connect(str(_db_path()), timeout=15)
+        conn.row_factory = sqlite3.Row
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM reminders ORDER BY due_time ASC")
+            rows = cur.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            print(f"[Reminder] DB load error: {e}")
+            return []
+        finally:
+            conn.close()
 
 
 def _save_db(reminders: List[dict]) -> bool:
-    p = _db_path()
-    try:
-        p.write_text(json.dumps(reminders, indent=2, ensure_ascii=False), encoding="utf-8")
-        return True
-    except Exception as e:
-        print(f"[Reminder] DB save error: {e}")
-        return False
+    _init_sqlite_db()
+    with _rem_lock:
+        conn = sqlite3.connect(str(_db_path()), timeout=15)
+        try:
+            with conn:
+                cur = conn.cursor()
+                # Clear and insert all to preserve exact in-memory representation
+                cur.execute("DELETE FROM reminders")
+                for item in reminders:
+                    cur.execute("""
+                        INSERT OR REPLACE INTO reminders
+                        (id, task_name, message, due_time, status, recurrence, created_at, completed_at, error)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        item.get("id"),
+                        item.get("task_name"),
+                        item.get("message", ""),
+                        item.get("due_time") or item.get("target_time", ""),
+                        item.get("status", "pending"),
+                        item.get("recurrence", "none"),
+                        item.get("created_at", item.get("created_at") or datetime.now().isoformat()),
+                        item.get("completed_at"),
+                        item.get("error")
+                    ))
+            # Sync mirror to legacy JSON for backward compatibility with external tools/tests
+            try:
+                _json_db_path().write_text(json.dumps(reminders, indent=2, ensure_ascii=False), encoding="utf-8")
+            except Exception:
+                pass
+            return True
+        except Exception as e:
+            print(f"[Reminder] DB save error: {e}")
+            return False
+        finally:
+            conn.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -209,92 +322,132 @@ def parse_datetime(
 #  OS Scheduling (Windows Task Scheduler / cron / launchd)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _write_notify_script(task_name: str, reminder_id: str, message: str) -> Path:
-    script_path = _reminders_dir() / f"{task_name}.py"
-    msg_literal = json.dumps(message)
-    rem_id_literal = json.dumps(reminder_id)
-    db_literal = json.dumps(str(_db_path()))
+def _ensure_notifier_script() -> Path:
+    """Ensure the single authoritative reminder notifier script exists."""
+    script_path = _reminders_dir() / "reminder_notifier.py"
+    if script_path.exists():
+        return script_path
 
-    script_body = f"""# Auto-generated by JARVIS reminder
-import sys, os, pathlib, json, time
+    notifier_code = """# Auto-generated authoritative reminder notifier for JARVIS
+import sys
+import os
+import argparse
+import sqlite3
+import time
+from datetime import datetime
 
-message = {msg_literal}
-rem_id = {rem_id_literal}
-db_file = {db_literal}
-
-notified = False
-
-# 1. Windows Notification via win10toast / plyer / powershell BurntToast
-try:
-    from plyer import notification
-    notification.notify(title="JARVIS Reminder", message=message, timeout=20)
-    notified = True
-except Exception:
-    pass
-
-if not notified:
+def notify_user(message: str) -> None:
+    notified = False
+    # 1. Windows Notification via plyer
     try:
-        from win10toast import ToastNotifier
-        ToastNotifier().show_toast("JARVIS Reminder", message, duration=15, threaded=False)
+        from plyer import notification
+        notification.notify(title="JARVIS Reminder", message=message, timeout=20)
         notified = True
     except Exception:
         pass
 
-if not notified:
+    # 2. Windows Notification via win10toast
+    if not notified:
+        try:
+            from win10toast import ToastNotifier
+            ToastNotifier().show_toast("JARVIS Reminder", message, duration=15, threaded=False)
+            notified = True
+        except Exception:
+            pass
+
+    # 3. PowerShell toast notification
+    if not notified:
+        try:
+            import subprocess
+            clean_msg = message.replace('"', '`"').replace("'", "''")
+            ps_script = (
+                "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null`n"
+                "$template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)`n"
+                "$textNodes = $template.GetElementsByTagName('text')`n"
+                "$textNodes.Item(0).AppendChild($template.CreateTextNode('JARVIS Reminder')) | Out-Null`n"
+                f"$textNodes.Item(1).AppendChild($template.CreateTextNode('{clean_msg}')) | Out-Null`n"
+                "$toast = [Windows.UI.Notifications.ToastNotification]::new($template)`n"
+                "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('JARVIS').Show($toast)"
+            )
+            subprocess.run(["powershell", "-NoProfile", "-Command", ps_script], check=False)
+            notified = True
+        except Exception:
+            pass
+
+    # 4. Fallback Windows msg command
+    if not notified:
+        try:
+            import subprocess
+            subprocess.run(["msg", "*", "/TIME:30", f"JARVIS Reminder: {message}"], check=False)
+        except Exception:
+            pass
+
+    # Audio cue
     try:
-        import subprocess
-        # PowerShell toast notification
-        ps = f'''[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
-$template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
-$textNodes = $template.GetElementsByTagName("text")
-$textNodes.Item(0).AppendChild($template.CreateTextNode("JARVIS Reminder")) | Out-Null
-$textNodes.Item(1).AppendChild($template.CreateTextNode("{{message}}")) | Out-Null
-$toast = [Windows.UI.Notifications.ToastNotification]::new($template)
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("JARVIS").Show($toast)'''
-        subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=False)
-        notified = True
+        import winsound
+        for freq in [800, 1000, 1200]:
+            winsound.Beep(freq, 160)
+            time.sleep(0.06)
     except Exception:
         pass
 
-if not notified:
+def main():
+    parser = argparse.ArgumentParser(description="JARVIS Authoritative Reminder Notifier")
+    parser.add_argument("--id", required=True, help="Reminder ID")
+    parser.add_argument("--db", required=True, help="Path to reminders SQLite database")
+    args = parser.parse_args()
+
+    reminder_id = args.id
+    db_path = args.db
+
+    if not os.path.exists(db_path):
+        return
+
+    message = ""
+    recurrence = "none"
+
     try:
-        import subprocess
-        subprocess.run(["msg", "*", "/TIME:30", f"JARVIS Reminder: {{message}}"], check=False)
-    except Exception:
-        pass
+        conn = sqlite3.connect(db_path, timeout=15)
+        conn.row_factory = sqlite3.Row
+        with conn:
+            cur = conn.cursor()
+            cur.execute("SELECT message, recurrence, status FROM reminders WHERE id = ?", (reminder_id,))
+            row = cur.fetchone()
+            if not row:
+                return
+            message = row["message"]
+            recurrence = row["recurrence"] or "none"
 
-try:
-    import winsound
-    for freq in [800, 1000, 1200]:
-        winsound.Beep(freq, 160)
-        time.sleep(0.06)
-except Exception:
-    pass
+            if recurrence == "none":
+                cur.execute(
+                    "UPDATE reminders SET status = 'completed', completed_at = ? WHERE id = ?",
+                    (datetime.now().isoformat(), reminder_id)
+                )
+    except Exception as e:
+        print(f"DB error in notifier: {e}", file=sys.stderr)
+        return
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
-# Mark as completed in local database
-try:
-    if os.path.exists(db_file):
-        with open(db_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        for r in data:
-            if r.get("id") == rem_id and r.get("recurrence", "none") == "none":
-                r["status"] = "completed"
-                r["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-        with open(db_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-except Exception:
-    pass
+    if message:
+        notify_user(message)
+
+if __name__ == "__main__":
+    main()
 """
-    script_path.write_text(script_body, encoding="utf-8")
+    script_path.write_text(notifier_code, encoding="utf-8")
     return script_path
 
 
 def _schedule_task(task_name: str, reminder_id: str, target_dt: datetime, message: str, recurrence: str = "none") -> bool:
-    """Schedule the reminder task using the OS scheduler."""
+    """Schedule the reminder task using the OS scheduler invoking the single authoritative notifier."""
     if not _IS_WINDOWS:
         return True  # Managed purely via persistent DB on non-Windows
 
-    script_path = _write_notify_script(task_name, reminder_id, message)
+    notifier_path = _ensure_notifier_script()
     python_exe = Path(sys.executable)
     pythonw = python_exe.parent / "pythonw.exe"
     if pythonw.exists():
@@ -333,13 +486,14 @@ def _schedule_task(task_name: str, reminder_id: str, target_dt: datetime, messag
     </CalendarTrigger>
   </Triggers>"""
 
+    db_arg = str(_db_path())
     xml_content = f"""<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo><Description>JARVIS Reminder</Description></RegistrationInfo>
 {trigger_xml}
   <Actions><Exec>
     <Command>{python_exe}</Command>
-    <Arguments>"{script_path}"</Arguments>
+    <Arguments>"{notifier_path}" --id "{reminder_id}" --db "{db_arg}"</Arguments>
   </Exec></Actions>
   <Settings>
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
@@ -372,12 +526,10 @@ def _unschedule_task(task_name: str) -> bool:
             ["schtasks", "/Delete", "/TN", task_name, "/F"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", **_CNW,
         )
-        # Delete associated python script
-        script_file = _reminders_dir() / f"{task_name}.py"
-        script_file.unlink(missing_ok=True)
         return res.returncode == 0
     except Exception:
         return False
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1,5 +1,9 @@
 import json
+import os
+import platform
 import re
+import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -8,15 +12,63 @@ def get_base_dir() -> Path:
         return Path(sys.executable).parent
     return Path(__file__).resolve().parent.parent
 
+def get_user_data_dir() -> Path:
+    """Return the per-user runtime data directory outside the repository."""
+    if platform.system() == "Windows":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "JARVIS"
+    elif platform.system() == "Darwin":
+        base = Path.home() / "Library" / "Application Support" / "JARVIS"
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "jarvis"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
 BASE_DIR    = get_base_dir()
 CONFIG_DIR  = BASE_DIR / "config"
 CONFIG_FILE = CONFIG_DIR / "api_keys.json"
 CONFIG_TEMPLATE = CONFIG_DIR / "api_keys.template.json"
 
+_KEYRING_SERVICE = "JARVIS_Mark_LVI"
+_KEYRING_USER    = "gemini_api_key"
+
 _SECRET_PATTERNS = [
     re.compile(r"AIza[0-9A-Za-z-_]{35}"),               # Google API Key pattern
     re.compile(r"sk-[a-zA-Z0-9]{20,}"),                 # Standard secret key prefix
 ]
+
+def _is_keyring_available() -> bool:
+    """Check if keyring package is available with an active backend."""
+    try:
+        import keyring
+        import keyring.backends.fail
+        b = keyring.get_keyring()
+        if isinstance(b, keyring.backends.fail.Keyring):
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def _restrict_file_permissions(path: Path) -> None:
+    """Restrict access permissions to the owner where the OS allows."""
+    try:
+        if not path.exists():
+            return
+        if platform.system() == "Windows":
+            # Best effort ACL restriction on Windows
+            try:
+                user = os.getlogin()
+                subprocess.run(
+                    ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:(R,W)"],
+                    capture_output=True,
+                    timeout=5,
+                )
+            except Exception:
+                os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+        else:
+            os.chmod(path, 0o600)
+    except Exception:
+        pass
 
 
 def redact_secret(text: str) -> str:
@@ -25,9 +77,12 @@ def redact_secret(text: str) -> str:
         return text
     redacted = text
     # 1. Redact known stored keys
-    key = get_gemini_key()
-    if key and len(key) >= 12 and key in redacted:
-        redacted = redacted.replace(key, "[REDACTED_API_KEY]")
+    try:
+        key = get_gemini_key()
+        if key and len(key) >= 8 and key in redacted:
+            redacted = redacted.replace(key, "[REDACTED_API_KEY]")
+    except Exception:
+        pass
     # 2. Redact regex patterns
     for pat in _SECRET_PATTERNS:
         redacted = pat.sub("[REDACTED_SECRET]", redacted)
@@ -39,9 +94,12 @@ def scan_for_secrets(text: str) -> list[str]:
     if not isinstance(text, str) or not text:
         return []
     matches = []
-    key = get_gemini_key()
-    if key and len(key) >= 12 and key in text:
-        matches.append("Configured Gemini API key detected in text")
+    try:
+        key = get_gemini_key()
+        if key and len(key) >= 8 and key in text:
+            matches.append("Configured Gemini API key detected in text")
+    except Exception:
+        pass
     for pat in _SECRET_PATTERNS:
         found = pat.findall(text)
         if found:
@@ -60,11 +118,96 @@ def ensure_config_exists() -> None:
         except Exception:
             pass
 
-def config_exists() -> bool:
-    return CONFIG_FILE.exists()
+TRUST_LEVEL_STRICT   = "strict"
+TRUST_LEVEL_BALANCED = "balanced"
+TRUST_LEVEL_TRUSTED  = "trusted"
+VALID_TRUST_LEVELS   = (TRUST_LEVEL_STRICT, TRUST_LEVEL_BALANCED, TRUST_LEVEL_TRUSTED)
+
+def get_trust_level() -> str:
+    """Return user trust level: 'strict', 'balanced' (default), or 'trusted'."""
+    val = str(load_api_keys().get("trust_level", TRUST_LEVEL_BALANCED)).strip().lower()
+    return val if val in VALID_TRUST_LEVELS else TRUST_LEVEL_BALANCED
+
+def set_trust_level(level: str) -> None:
+    """Persist user trust level setting."""
+    clean = str(level).strip().lower()
+    if clean not in VALID_TRUST_LEVELS:
+        raise ValueError(f"Invalid trust level '{level}'. Must be one of {VALID_TRUST_LEVELS}")
+    ensure_config_dir()
+    data: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    data["trust_level"] = clean
+    CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+DEFAULT_ALLOWED_SUBNETS = [
+    "127.0.0.0/8",
+    "::1/128",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "100.64.0.0/10",
+]
+
+def get_dashboard_allow_lan() -> bool:
+    """Return whether the dashboard is allowed to bind to LAN (default False: loopback only)."""
+    return bool(load_api_keys().get("dashboard_allow_lan", False))
+
+def set_dashboard_allow_lan(allow: bool) -> None:
+    """Configure whether the dashboard binds to LAN or loopback only."""
+    ensure_config_dir()
+    data: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    data["dashboard_allow_lan"] = bool(allow)
+    CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+def get_dashboard_allowed_subnets() -> list[str]:
+    """Return list of IP CIDR subnets allowed to access the dashboard."""
+    subnets = load_api_keys().get("dashboard_allowed_subnets")
+    if isinstance(subnets, list) and subnets:
+        return [str(s).strip() for s in subnets if str(s).strip()]
+    return list(DEFAULT_ALLOWED_SUBNETS)
+
+def set_dashboard_allowed_subnets(subnets: list[str]) -> None:
+    """Set allowed IP CIDR subnets for dashboard access."""
+    ensure_config_dir()
+    data: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    data["dashboard_allowed_subnets"] = [str(s).strip() for s in subnets if str(s).strip()]
+    CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+def _migrate_plaintext_key_to_keyring(data: dict) -> bool:
+    """Migrate plaintext key from json dict to OS keyring if available."""
+    if not _is_keyring_available():
+        return False
+    plaintext_key = str(data.get("gemini_api_key") or "").strip()
+    if plaintext_key:
+        try:
+            import keyring
+            keyring.set_password(_KEYRING_SERVICE, _KEYRING_USER, plaintext_key)
+            del data["gemini_api_key"]
+            CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            print("[Config] 🔒 Auto-migrated Gemini API key to OS credential store.")
+            return True
+        except Exception as e:
+            print(f"[Config] ⚠️ Keyring migration failed: {e}")
+            return False
+    return False
 
 def save_api_keys(gemini_api_key: str) -> None:
     ensure_config_dir()
+    clean_key = gemini_api_key.strip()
 
     data: dict = {}
     if CONFIG_FILE.exists():
@@ -73,24 +216,67 @@ def save_api_keys(gemini_api_key: str) -> None:
         except Exception:
             data = {}
 
-    data["gemini_api_key"] = gemini_api_key.strip()
+    if _is_keyring_available():
+        try:
+            import keyring
+            keyring.set_password(_KEYRING_SERVICE, _KEYRING_USER, clean_key)
+            # Remove secret key from JSON file so it is never stored plaintext
+            data.pop("gemini_api_key", None)
+            CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            return
+        except Exception as e:
+            print(f"[Config] ⚠️ OS Keyring error ({e}) — falling back to restricted file storage.")
 
-    CONFIG_FILE.write_text(
-        json.dumps(data, indent=2),
-        encoding="utf-8"
-    )
+    # Fallback path when keyring is unavailable
+    print("[Config] ⚠️ OS Keyring unavailable — saving API key to config/api_keys.json with restricted permissions.")
+    data["gemini_api_key"] = clean_key
+    CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    _restrict_file_permissions(CONFIG_FILE)
 
 def load_api_keys() -> dict:
     if not CONFIG_FILE.exists():
         return {}
     try:
-        return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        # Auto-migrate plaintext key if keyring is active
+        if "gemini_api_key" in data and _is_keyring_available():
+            _migrate_plaintext_key_to_keyring(data)
+        return data
     except Exception as e:
         print(f"❌ Failed to load api_keys.json: {e}")
         return {}
 
 def get_gemini_key() -> str | None:
-    return load_api_keys().get("gemini_api_key")
+    # 1. Environment variable override
+    env_key = os.environ.get("GEMINI_API_KEY")
+    if env_key and len(env_key.strip()) > 8:
+        return env_key.strip()
+
+    # 2. OS Keyring (Windows Credential Manager / Keychain / SecretService)
+    if _is_keyring_available():
+        try:
+            import keyring
+            stored = keyring.get_password(_KEYRING_SERVICE, _KEYRING_USER)
+            if stored and len(stored.strip()) > 8:
+                return stored.strip()
+        except Exception:
+            pass
+
+    # 3. Fallback: check config/api_keys.json (and auto-migrate if possible)
+    raw_data = {}
+    if CONFIG_FILE.exists():
+        try:
+            raw_data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    file_key = str(raw_data.get("gemini_api_key") or "").strip()
+    if file_key:
+        if _is_keyring_available():
+            _migrate_plaintext_key_to_keyring(raw_data)
+        return file_key
+
+    return None
 
 def is_configured() -> bool:
     key = get_gemini_key()
@@ -631,6 +817,24 @@ def get_coding_provider() -> str:
 
 def save_coding_provider(provider_id: str) -> None:
     _patch_providers(coding=(provider_id or "").strip())
+
+
+def get_provider_fallback_enabled() -> bool:
+    """Return whether fallback to alternative/local LLM providers is enabled (default False)."""
+    return bool(load_api_keys().get("provider_fallback_enabled", False))
+
+
+def set_provider_fallback_enabled(enabled: bool) -> None:
+    """Configure whether fallback to alternative/local LLM providers is enabled."""
+    ensure_config_dir()
+    data: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    data["provider_fallback_enabled"] = bool(enabled)
+    CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def get_sidecar_first() -> bool:

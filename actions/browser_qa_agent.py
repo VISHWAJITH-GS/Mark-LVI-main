@@ -37,7 +37,12 @@ from actions.browser_session_manager import get_browser_session_manager, Browser
 
 logger = logging.getLogger(__name__)
 
-REPORTS_DIR = Path("reports")
+try:
+    from memory.config_manager import get_user_data_dir
+    REPORTS_DIR = get_user_data_dir() / "reports"
+except Exception:
+    REPORTS_DIR = Path.home() / ".jarvis" / "reports"
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @dataclass
@@ -480,28 +485,10 @@ def browser_qa(parameters: dict, player=None, speak=None, **kwargs) -> str:
     return report.summary_text()
 
 
-TOOL = {
+# TOOL disconnected — deprecated in favor of live Edge CDP session attachment
+_DEPRECATED_TOOL = {
     "name": "browser_qa",
-    "description": (
-        "AUTONOMOUS BROWSER QA AGENT: Automatically tests local websites and web applications. "
-        "Detects running development servers, inspects page structure and DOM elements, "
-        "formulates comprehensive test scenarios using Gemini, executes them in a visible headed "
-        "browser using semantic Playwright selectors, verifies assertions, tracks console & network errors, "
-        "and generates styled reports with screenshots. Call this when asked to 'test my website' or 'run browser QA'."
-    ),
-    "brief": "Autonomous website testing, DOM verification, error detection, and QA reports.",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "url": {
-                "type": "STRING",
-                "description": "The URL of the website to test (e.g. 'http://localhost:3000' or 'http://localhost:5173'). Optional if server running.",
-            },
-            "project_dir": {
-                "type": "STRING",
-                "description": "Path to the project directory to detect dev server or frontend framework.",
-            },
-        },
-    },
+    "description": "Deprecated.",
+    "parameters": {"type": "OBJECT", "properties": {}},
     "handler": browser_qa,
 }

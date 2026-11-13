@@ -157,6 +157,9 @@ def build(provider_id: str, cfg: dict):
     return inst
 
 
+load = build
+
+
 def reset() -> None:
     """Drop every built provider. Called when the panel applies a change, so a
     new setting takes effect without a restart — the same promise the voice and

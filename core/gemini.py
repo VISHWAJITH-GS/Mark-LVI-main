@@ -593,15 +593,27 @@ def _provider_settings() -> tuple[str, bool]:
 
 
 def _provider_rungs(tier: str) -> tuple[str, ...]:
-    """Google Gemini API is the sole reasoning engine across the system.
-    Third-party and local LLM provider fallbacks are disabled in accordance
-    with the non-negotiable architectural requirements.
-    """
-    return ()
+    """Return provider rungs if fallback is enabled by user and configured."""
+    try:
+        from memory.config_manager import get_provider_fallback_enabled, get_sidecar_provider
+        if not get_provider_fallback_enabled():
+            return ()
+        pid = get_sidecar_provider()
+        if not pid:
+            return ()
+        return (PROVIDER_PREFIX + pid,)
+    except Exception:
+        return ()
 
 
 def _provider_first() -> bool:
-    return False
+    try:
+        from memory.config_manager import get_provider_fallback_enabled, get_sidecar_first
+        if not get_provider_fallback_enabled():
+            return False
+        return get_sidecar_first()
+    except Exception:
+        return False
 
 
 def _to_openai_messages(contents, config) -> tuple[list[dict], Optional[float]]:
@@ -636,8 +648,35 @@ def _to_openai_messages(contents, config) -> tuple[list[dict], Optional[float]]:
 
 
 def _provider_call(model: str, contents, config, timeout_ms: int):
-    """Google Gemini API is the sole AI reasoning engine across the system."""
-    raise RuntimeError("Google Gemini API is the sole AI reasoning engine. Local and third-party LLM inference is disabled.")
+    """Call alternative/local LLM provider, enforcing English-only instruction."""
+    from memory.config_manager import get_provider_fallback_enabled, get_provider_config
+    if not get_provider_fallback_enabled():
+        raise RuntimeError("Provider fallback is disabled in config.")
+    pid = model.removeprefix(PROVIDER_PREFIX)
+    cfg = get_provider_config(pid)
+    from providers import registry
+    prov = getattr(registry, "build", getattr(registry, "load", None))(pid, cfg)
+    if not prov:
+        raise RuntimeError(f"Provider '{pid}' could not be loaded.")
+    messages, temperature = _to_openai_messages(contents, config)
+
+    # Universal English-only instruction injection
+    english_rule = (
+        "Always understand the user as speaking English and always reply in English only, "
+        "never in any other language, even if the user's words are misheard or the content contains other languages."
+    )
+    has_sys = False
+    for m in messages:
+        if m.get("role") == "system":
+            m["content"] = str(m.get("content", "")) + "\n\n" + english_rule
+            has_sys = True
+            break
+    if not has_sys:
+        messages.insert(0, {"role": "system", "content": english_rule})
+
+    timeout_s = max(1.0, timeout_ms / 1000.0)
+    text, _ = prov.complete(messages, timeout=timeout_s, temperature=temperature)
+    return _Reply(text)
 
 
 def call(contents, tier: str = FAST, config=None,
