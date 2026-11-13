@@ -6931,10 +6931,8 @@ class MainWindow(QMainWindow):
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
         self._cam_preview = _CameraPreview(self.centralWidget())
 
-        # Clipboard panel (top-level floating tool window, always positioned at center-bottom of screen)
-        self._clipboard_panel = ClipboardPanel(None)
-        self._clipboard_panel.action_requested.connect(self._on_clipboard_action)
-        QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed)
+        # Clipboard triggers removed per user request
+        self._clipboard_panel = None
 
         self._overlay: SetupOverlay | None = None
         self._ready = self._check_config()
@@ -6954,7 +6952,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._is_closed = True
-        if hasattr(self, "_clipboard_panel"):
+        if getattr(self, "_clipboard_panel", None) is not None:
             try:
                 self._clipboard_panel.close()
             except Exception:
@@ -8326,8 +8324,8 @@ class MainWindow(QMainWindow):
             cw.height() - ph - 28,
             pw, ph,
         )
-        # Clipboard panel — bottom-center
-        if hasattr(self, '_clipboard_panel') and self._clipboard_panel.isVisible():
+        # Clipboard panel — bottom-center (triggers removed)
+        if getattr(self, '_clipboard_panel', None) is not None and self._clipboard_panel.isVisible():
             self._position_clipboard_panel()
         # Quick drawer — reposition if open
         if hasattr(self, '_quick_drawer') and self._quick_drawer.isVisible():
@@ -10097,35 +10095,20 @@ class MainWindow(QMainWindow):
         ov.raise_()
         self._plugin_settings_overlay = ov   # keep a reference so it isn't GC'd
 
-    # ── Clipboard intelligence ───────────────────────────────────────────────────
+    # ── Clipboard intelligence (triggers removed) ───────────────────────────────
 
     def _on_clipboard_changed(self):
-        try:
-            text = QApplication.clipboard().text().strip()
-            if len(text) >= 10:
-                self._clipboard_sig.emit(text)
-        except Exception:
-            pass
+        # Automatic clipboard triggers removed per user request
+        pass
 
     def _show_clipboard_panel(self, text: str):
-        self._position_clipboard_panel()
-        self._clipboard_panel.show_clipboard(text)
-        self._position_clipboard_panel()
-        self._clipboard_panel.raise_()
-        self._clipboard_panel.activateWindow()
+        pass
 
     def _position_clipboard_panel(self):
-        screen = QApplication.primaryScreen().availableGeometry()
-        pw = ClipboardPanel._W
-        ph = self._clipboard_panel.sizeHint().height() or ClipboardPanel._H
-        x = max(screen.left() + 10, min(screen.right() - pw - 10, screen.left() + (screen.width() - pw) // 2))
-        y = max(screen.top() + 10, screen.bottom() - ph - 24)
-        self._clipboard_panel.setGeometry(x, y, pw, ph)
-        self._clipboard_panel.raise_()
+        pass
 
     def _on_clipboard_action(self, cmd: str):
-        if self.on_text_command:
-            threading.Thread(target=self.on_text_command, args=(cmd,), daemon=True).start()
+        pass
 
     # ────────────────────────────────────────────────────────────────────────────
 

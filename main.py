@@ -2123,8 +2123,7 @@ class JarvisLive:
 
     async def _send_startup_briefing(self) -> None:
         """
-        Instant motivating greeting with 12-hour format time.
-        Greets the user with an inspiring, energizing tag/thought for the day.
+        Startup greeting stating time and date only.
         """
         memory   = load_memory()
         identity = memory.get("identity", {})
@@ -2135,7 +2134,9 @@ class JarvisLive:
 
         lang = _val("language")
         name = _val("name")
-        time_str = datetime.now().strftime("%I:%M %p")
+        now = datetime.now()
+        time_str = now.strftime("%I:%M %p").lstrip("0")
+        date_str = now.strftime("%A, %B %d, %Y")
 
         await asyncio.sleep(0.3)
         if not self.session:
@@ -2146,23 +2147,13 @@ class JarvisLive:
                        if lang else "")
         name_clause = f" Address the user as {name}." if name else ""
 
-        # Inject last session context if available — pop removes it so it's never repeated
-        last = await asyncio.to_thread(pop_last_session)
-        session_clause = ""
-        if last:
-            try:
-                _delta = (datetime.now() - datetime.strptime(last["date"], "%Y-%m-%d")).days
-                _when  = "earlier today" if _delta == 0 else ("yesterday" if _delta == 1 else f"{_delta} days ago")
-            except Exception:
-                _when = "last time"
-            session_clause = (
-                f" Also briefly and naturally mention that {_when}: {last['summary']}"
-            )
+        # Pop any pending session context so it does not accumulate
+        await asyncio.to_thread(pop_last_session)
 
         prompt = (
-            f"Greet the user warmly and energetically, stating the time is {time_str}. "
-            f"Share a sharp, inspiring, motivating thought or tag for the day to conquer goals and build greatness.{session_clause} "
-            f"Do not mention or fetch news. Keep it to 2 short sentences max. Do not call any tools.{lang_clause}{name_clause}"
+            f"Greet the user stating the time ({time_str}) and date ({date_str}) only. "
+            f"Do not include any motivational speech, talks, inspiration, advice, session recap, or extra commentary. "
+            f"Speak little: exactly one short, sharp, and clear sentence. Do not call any tools.{lang_clause}{name_clause}"
         )
 
         # Clear the turn-done event so we can wait for Phase 1 to finish

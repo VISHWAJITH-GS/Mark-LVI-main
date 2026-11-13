@@ -649,44 +649,18 @@ class TestKeenaHudTransformation(unittest.TestCase):
         self.win._on_close_display_win(0)
         self.assertEqual(len(self.win._displays), 0)
 
-    def test_22_global_screen_bottom_clipboard_panel(self):
-        """Verify clipboard quick-action panel appears at physical screen center-bottom in normal, minimized and maximized states."""
-        clip_panel = self.win._clipboard_panel
-        screen = QApplication.primaryScreen().availableGeometry()
-        pw = clip_panel.width()
-        ph = clip_panel.sizeHint().height() or clip_panel._H
+    def test_22_clipboard_triggers_removed(self):
+        """Verify clipboard automatic triggers and panel popups have been removed."""
+        self.assertIsNone(getattr(self.win, "_clipboard_panel", None))
 
-        expected_x = max(screen.left() + 10, min(screen.right() - pw - 10, screen.left() + (screen.width() - pw) // 2))
-        expected_y = max(screen.top() + 10, screen.bottom() - ph - 24)
+        # Copy text to clipboard and call on_clipboard_changed
+        QApplication.clipboard().setText("Test clipboard text to ensure no triggers fire")
+        self.win._on_clipboard_changed()
+        self.win._show_clipboard_panel("Another text snippet")
 
-        # 1. Trigger in normal window state
-        self.win._show_clipboard_panel("This is a test snippet for the clipboard trigger")
-        self.assertTrue(clip_panel.isVisible())
-        self.assertEqual(clip_panel.x(), expected_x)
-        self.assertEqual(clip_panel.y(), expected_y)
-
-        # 2. Minimize JARVIS to 58x58 favicon orb
-        self.win.toggle_minimize_top()
-        self.assertTrue(getattr(self.win, "_is_minimized_top", False))
-
-        # Trigger clipboard while JARVIS is minimized
-        self.win._show_clipboard_panel("Another long text snippet to trigger actions while minimized")
-        self.assertTrue(clip_panel.isVisible())
-        # Must still be positioned at center-bottom of screen, NOT clipped to 58x58 orb
-        self.assertEqual(clip_panel.x(), expected_x)
-        self.assertEqual(clip_panel.y(), expected_y)
-
-        # 3. Restore JARVIS window
-        self.win.toggle_minimize_top()
-        self.assertFalse(getattr(self.win, "_is_minimized_top", False))
-
-        # Re-position verification
-        self.win._position_clipboard_panel()
-        self.assertEqual(clip_panel.x(), expected_x)
-        self.assertEqual(clip_panel.y(), expected_y)
-
-        # Clean up
-        clip_panel.hide()
+        # Confirm no clipboard panel exists or is visible
+        clip_panel = getattr(self.win, "_clipboard_panel", None)
+        self.assertTrue(clip_panel is None or not clip_panel.isVisible())
 
     def test_23_display_control_focus_maximize_minimize_close(self):
         """Verify JARVIS can control displays: focus, maximize, minimize to dock, and close (individually & all)."""
