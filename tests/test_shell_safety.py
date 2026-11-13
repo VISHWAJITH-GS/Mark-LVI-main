@@ -43,7 +43,7 @@ class TestShellSafety(unittest.TestCase):
             windows_control.connect_bluetooth_device(malicious_device)
 
             self.assertTrue(mock_run_ps.called)
-            script_sent = mock_run_ps.call_args[0][0]
+            script_sent = mock_run_ps.call_args_list[0][0][0]
             # Must NOT contain the unescaped quotes or malicious commands
             self.assertNotIn('MyHeadphones" ; calc.exe', script_sent)
             self.assertIn('$name = "MyHeadphones  calc.exe"', script_sent)

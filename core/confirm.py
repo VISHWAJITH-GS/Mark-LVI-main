@@ -1,72 +1,57 @@
 """
-core/confirm.py — a confirmation the model cannot forge.
+core/confirm.py — Centralized Confirmation Manager & Execution Gate.
 
-THE PROBLEM WITH THE OLD GATE
-    computer_settings guarded shutdown and restart like this:
-
-        confirmed = str(params.get("confirmed", "")).lower()
-        if confirmed not in ("yes", "true", "1", "confirm"):
-            return "Please confirm by calling again with confirmed=yes."
-
-    `confirmed` is a tool parameter, which means the *model* writes it. Nothing
-    stops it from sending confirmed=yes on the first call, and nothing checks
-    that a human was ever involved. It is a convention, not a gate — and its
-    coverage was two actions, so deleting files and switching off the WiFi the
-    assistant is talking over went through with no gate at all.
-
-THE DESIGN HERE
-    The confirmation token is issued by the *interface*, never by the model:
-
-      1. An action calls `request(...)` with a callable that does the real work.
-      2. This module hands the UI a banner with CONFIRM / CANCEL and returns
-         IMMEDIATELY with a sentence for the model to say out loud.
-      3. If — and only if — the user presses CONFIRM, the UI calls `resolve()`,
-         which runs the stored callable off the Qt thread.
-
-    Nothing blocks. The model keeps talking while the banner is up, so this
-    costs no latency at all; in fact it is cheaper than the old gate, which
-    burned two tool round trips (reject, then re-call) on every shutdown.
-
-WHAT BELONGS HERE AND WHAT DOES NOT
-    Only genuinely irreversible things. Anything that can be reversed should be
-    done at once and pushed onto core/undo.py instead — undo is faster than a
-    question, and an assistant that asks before every action is one nobody uses.
+THE DESIGN
+    The confirmation token is issued by the interface/user, never by the model:
+      1. ActionExecutionGuard parks any confirmation-required action with PendingAction.
+      2. The UI receives a banner with CONFIRM / CANCEL and the assistant speaks the
+         prompt directly to the user.
+      3. If and only if the user says "confirm" / "yes" or presses CONFIRM, resolve(True)
+         is invoked, running the stored action callable off the Qt thread.
+      4. If the user says "no" / "cancel" or presses CANCEL, resolve(False) is invoked,
+         cancelling and discarding the pending action.
+      5. Any new action request automatically discards previous pending actions, preventing
+         stale or mismatched confirmation reuse.
+      6. Expired actions (>90s) are safely dropped.
+      7. Duplicate execution is strictly prevented by popping pending state before execution.
 """
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Any, Callable, Dict, Optional
 
-# A pending confirmation is abandoned after this long. Chosen to outlast a
-# normal "hang on, let me look at the screen" pause without leaving a live
-# shutdown button sitting on the HUD for the rest of the day.
+# A pending confirmation is abandoned after this long.
 TIMEOUT_SECONDS = 90.0
 
 
 @dataclass
-class _Pending:
-    key:     str
-    title:   str
-    detail:  str
-    run:     Callable[[], str]
-    at:      float
+class PendingAction:
+    key: str
+    action: str
+    parameters: dict
+    risk_level: str
+    title: str
+    detail: str
+    run: Callable[[], str]
+    at: float
+    payment_details: Optional[dict] = None
 
 
-_pending: Optional[_Pending] = None
+_pending: Optional[PendingAction] = None
 _lock = threading.Lock()
 
-# Set once at startup by main.py. Signature: (title, detail) -> None for show,
-# and () -> None for hide. Both are marshalled onto the Qt thread by the UI.
+# Callbacks wired to UI banner
 _show_cb: Optional[Callable[[str, str], None]] = None
 _hide_cb: Optional[Callable[[], None]] = None
 _log_cb:  Optional[Callable[[str], None]] = None
 
 
 def bind(show, hide, log=None) -> None:
-    """Wire this module to the HUD. Called once from main.py at startup."""
+    """Wire this module to the HUD banner. Called once from main.py at startup."""
     global _show_cb, _hide_cb, _log_cb
     _show_cb, _hide_cb, _log_cb = show, hide, log
 
@@ -79,103 +64,215 @@ def _log(msg: str) -> None:
             pass
 
 
-def request(key: str, title: str, detail: str, run: Callable[[], str]) -> str:
-    """Park an irreversible action behind the confirmation gate.
+class ConfirmationManager:
+    """Centralized manager for pending confirmation requests and resolutions."""
 
-    Returns the sentence the tool should hand back to the model — phrased as a
-    short direct confirmation question answerable by voice or screen."""
-    global _pending
+    @classmethod
+    def request_action(
+        cls,
+        action: str,
+        parameters: dict,
+        risk_level: str,
+        title: str,
+        detail: str,
+        run: Callable[[], str],
+        payment_details: Optional[dict] = None,
+    ) -> str:
+        """Park an action behind the confirmation gate."""
+        global _pending
 
-    with _lock:
-        _pending = _Pending(key=key, title=title, detail=detail,
-                            run=run, at=time.monotonic())
+        with _lock:
+            old = _pending
+            _pending = PendingAction(
+                key=action,
+                action=action,
+                parameters=dict(parameters or {}),
+                risk_level=str(risk_level),
+                title=title,
+                detail=detail,
+                run=run,
+                at=time.monotonic(),
+                payment_details=payment_details,
+            )
 
-    if _show_cb is not None:
-        try:
-            _show_cb(title, detail)
-        except Exception as e:
-            pass
+        if old is not None:
+            _log(f"SYS: Replaced pending action '{old.title}' with '{title}'")
 
-    _log(f"SYS: Awaiting confirmation — {title}")
-    return (
-        f"[CONFIRMATION_PENDING] Shall I proceed with {title}? "
-        f"Say confirm to execute, or no to cancel."
+        if _show_cb is not None:
+            try:
+                _show_cb(title, detail)
+            except Exception:
+                pass
+
+        _log(f"SYS: Awaiting confirmation — {title} [{risk_level}]")
+
+        # Voice prompt phrasing
+        if payment_details:
+            amt = payment_details.get("amount") or "the specified amount"
+            recip = payment_details.get("recipient") or payment_details.get("merchant") or "the merchant"
+            return (
+                f"[CONFIRMATION_PENDING] Shall I proceed with payment of {amt} to {recip}? "
+                f"Say confirm to execute, or no to cancel."
+            )
+        elif "high_impact" in str(risk_level).lower():
+            return (
+                f"[CONFIRMATION_PENDING] Shall I proceed with {title}? "
+                f"Note: {detail}. Say confirm to execute, or no to cancel."
+            )
+        else:
+            return (
+                f"[CONFIRMATION_PENDING] Shall I proceed with {title}? "
+                f"Say confirm to execute, or no to cancel."
+            )
+
+    @classmethod
+    def discard_pending(cls, reason: str = "") -> None:
+        """Discard any currently pending action."""
+        global _pending
+        with _lock:
+            old = _pending
+            _pending = None
+        if _hide_cb:
+            try:
+                _hide_cb()
+            except Exception:
+                pass
+        if old is not None:
+            _log(f"SYS: Discarded pending action — {old.title} ({reason or 'manual'})")
+
+    @classmethod
+    def get_pending(cls) -> Optional[PendingAction]:
+        """Return the current active pending action, or None if empty or expired."""
+        with _lock:
+            if _pending is None:
+                return None
+            if time.monotonic() - _pending.at > TIMEOUT_SECONDS:
+                return None
+            return _pending
+
+    @classmethod
+    def resolve(cls, accepted: bool) -> bool:
+        """Execute or cancel the pending action."""
+        global _pending
+
+        with _lock:
+            p, _pending = _pending, None
+
+        if _hide_cb:
+            try:
+                _hide_cb()
+            except Exception:
+                pass
+
+        if p is None:
+            return False
+
+        if time.monotonic() - p.at > TIMEOUT_SECONDS:
+            _log(f"SYS: Confirmation expired — {p.title}")
+            return False
+
+        if not accepted:
+            _log(f"SYS: Cancelled — {p.title}")
+            return False
+
+        # Execute on background worker thread
+        def _worker():
+            try:
+                result = p.run() or "Done."
+                _log(f"SYS: Confirmed — {p.title}. {result}")
+            except Exception as e:
+                _log(f"ERR: {p.title} failed — {e}")
+
+        threading.Thread(
+            target=_worker,
+            daemon=True,
+            name=f"confirm-{p.key}",
+        ).start()
+        return True
+
+    @classmethod
+    def resolve_by_voice(cls, utterance: str) -> Optional[bool]:
+        """Inspects user voice utterance when confirmation is pending."""
+        if not pending_title():
+            return None
+
+        clean = str(utterance or "").lower().strip()
+        yes_words = {
+            "confirm", "cconfirm", "confirmed", "yes", "proceed",
+            "sure", "do it", "approved", "go ahead", "okay", "ok"
+        }
+        no_words = {
+            "no", "cancel", "stop", "abort", "don't", "dont",
+            "never mind", "negative", "reject"
+        }
+
+        words = set(re.findall(r"\w+", clean))
+        if "confirm" in clean or "cconfirm" in clean or (words & yes_words):
+            return cls.resolve(True)
+        if words & no_words:
+            cls.resolve(False)
+            return False
+        return None
+
+    @classmethod
+    def pending_title(cls) -> str:
+        """Return title of current pending action, or '' if none/expired."""
+        with _lock:
+            if _pending is None:
+                return ""
+            if time.monotonic() - _pending.at > TIMEOUT_SECONDS:
+                return ""
+            return _pending.title
+
+
+# Backward-compatible module-level functions
+def request_action(
+    action: str,
+    parameters: dict,
+    risk_level: str,
+    title: str,
+    detail: str,
+    run: Callable[[], str],
+    payment_details: Optional[dict] = None,
+) -> str:
+    return ConfirmationManager.request_action(
+        action=action,
+        parameters=parameters,
+        risk_level=risk_level,
+        title=title,
+        detail=detail,
+        run=run,
+        payment_details=payment_details,
     )
 
 
-def resolve(accepted: bool) -> None:
-    """Called by the UI when the user presses CONFIRM or CANCEL, or by voice recognition.
+def request(key: str, title: str, detail: str, run: Callable[[], str]) -> str:
+    """Backward-compatible request wrapper."""
+    return ConfirmationManager.request_action(
+        action=key,
+        parameters={},
+        risk_level="confirmation",
+        title=title,
+        detail=detail,
+        run=run,
+    )
 
-    Runs the stored callable on a worker thread — this is invoked from the Qt
-    thread or voice thread, and shutting the machine down from inside a button handler would
-    freeze the interface on its way out."""
-    global _pending
 
-    with _lock:
-        p, _pending = _pending, None
-
-    if _hide_cb:
-        try:
-            _hide_cb()
-        except Exception:
-            pass
-
-    if p is None:
-        return
-
-    if time.monotonic() - p.at > TIMEOUT_SECONDS:
-        _log(f"SYS: Confirmation expired — {p.title}")
-        return
-
-    if not accepted:
-        _log(f"SYS: Cancelled — {p.title}")
-        return
-
-    # Record sensitive approval for balanced trust level session
-    try:
-        from core.permissions import approve_sensitive_action_for_session
-        approve_sensitive_action_for_session(p.key)
-    except Exception:
-        pass
-
-    def _worker():
-        try:
-            result = p.run() or "Done."
-            _log(f"SYS: Confirmed — {p.title}. {result}")
-        except Exception as e:
-            _log(f"ERR: {p.title} failed — {e}")
-
-    threading.Thread(target=_worker, daemon=True,
-                     name=f"confirm-{p.key}").start()
+def resolve(accepted: bool) -> bool:
+    return ConfirmationManager.resolve(accepted)
 
 
 def resolve_by_voice(utterance: str) -> Optional[bool]:
-    """Inspects a user voice utterance when confirmation is pending.
-    
-    Returns True if confirmed, False if rejected, or None if unrecognized.
-    """
-    if not pending_title():
-        return None
-    import re
-    clean = str(utterance or "").lower().strip()
-    yes_words = {"confirm", "cconfirm", "confirmed", "yes", "proceed", "sure", "do it", "approved", "go ahead", "okay", "ok"}
-    no_words = {"no", "cancel", "stop", "abort", "don't", "dont", "never mind", "negative"}
-
-    words = set(re.findall(r"\w+", clean))
-    if ("confirm" in clean or "cconfirm" in clean or (words & yes_words)):
-        resolve(True)
-        return True
-    if words & no_words:
-        resolve(False)
-        return False
-    return None
+    return ConfirmationManager.resolve_by_voice(utterance)
 
 
 def pending_title() -> str:
-    """'' when nothing is waiting. Lets an action avoid stacking two banners."""
-    with _lock:
-        if _pending is None:
-            return ""
-        if time.monotonic() - _pending.at > TIMEOUT_SECONDS:
-            return ""
-        return _pending.title
+    return ConfirmationManager.pending_title()
+
+
+def get_pending() -> Optional[PendingAction]:
+    return ConfirmationManager.get_pending()
+
+
+def discard_pending(reason: str = "") -> None:
+    ConfirmationManager.discard_pending(reason)

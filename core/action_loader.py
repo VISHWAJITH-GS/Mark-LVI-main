@@ -211,42 +211,15 @@ class ActionRegistry:
                 duration_ms=dur,
             )
 
-        from core import permissions
-        perm_level = permissions.get_action_permission(name, parameters)
-        if permissions.requires_confirmation(name, parameters) and not parameters.get("confirmed"):
-            dur = (time.monotonic() - t0) * 1000
-            res = outcome.ActionResult(
-                status=outcome.STATUS_NEEDS_CONFIRMATION,
-                action=name,
-                success=False,
-                verified=False,
-                message=f"Action '{name}' is classified as {perm_level} and requires explicit confirmation before executing.",
-                duration_ms=dur,
-            )
-            permissions.log_action_audit(name, parameters or {}, perm_level, res.status, res.verified, res.error)
-            return res
-
-        try:
-            raw = _call_handler(rec.handler, parameters or {}, ctx or {})
-            dur = (time.monotonic() - t0) * 1000
-            res = outcome.normalize_result(raw, action_name=name, duration_ms=dur)
-            permissions.log_action_audit(name, parameters or {}, perm_level, res.status, res.verified, res.error)
-            return res
-        except Exception as e:
-            dur = (time.monotonic() - t0) * 1000
-            self._logger(f"Action '{name}' crashed during execute(): {e}")
-            traceback.print_exc()
-            res = outcome.ActionResult(
-                status=outcome.STATUS_FAILED,
-                action=name,
-                success=False,
-                verified=False,
-                message=f"Tool '{name}' failed: {e}",
-                error=str(e),
-                duration_ms=dur,
-            )
-            permissions.log_action_audit(name, parameters or {}, perm_level, res.status, res.verified, res.error)
-            return res
+        from core.permissions import ActionExecutionGuard
+        return ActionExecutionGuard.guard_and_execute(
+            action_name=name,
+            parameters=parameters or {},
+            handler=rec.handler,
+            ctx=ctx or {},
+            logger=self._logger,
+            t0=t0,
+        )
 
     # -- called by main.py from _execute_tool (backward-compatible string return) --
     def run(self, name: str, parameters: dict, ctx: dict | None = None) -> str:

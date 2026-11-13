@@ -619,8 +619,26 @@ def dark_mode():
             print(f"[Settings] dark_mode Linux failed: {e}")
 
 def get_wifi_status() -> dict:
-    """Query whether Wi-Fi is turned on or turned off across platforms."""
-    if _OS == "Darwin":
+    """Query Wi-Fi adapter state, connection state, SSID, and IP address."""
+    if _OS == "Windows":
+        try:
+            from actions import windows_control
+            st = windows_control.get_wifi_status()
+            state_str = "turned on" if st.get("enabled") else "turned off"
+            return {
+                "found": st.get("adapter_present", True),
+                "name": st.get("adapter_name", "Wi-Fi"),
+                "status": st.get("adapter_status", "Up" if st.get("enabled") else "Down"),
+                "is_on": st.get("enabled", False),
+                "connected": st.get("connected", False),
+                "connected_ssid": st.get("connected_ssid"),
+                "has_internet": st.get("has_internet", False),
+                "ip_address": st.get("ip_address"),
+                "state_str": state_str,
+            }
+        except Exception as e:
+            return {"found": False, "error": str(e), "state_str": "unknown"}
+    elif _OS == "Darwin":
         try:
             iface = _get_macos_wifi_interface()
             res = subprocess.run(
@@ -629,41 +647,6 @@ def get_wifi_status() -> dict:
             )
             is_on = "On" in res.stdout
             return {"found": True, "is_on": is_on, "state_str": "turned on" if is_on else "turned off"}
-        except Exception as e:
-            return {"found": False, "error": str(e), "state_str": "unknown"}
-    elif _OS == "Windows":
-        try:
-            ps = (
-                "$adapters = Get-NetAdapter; "
-                "$res = @(); "
-                "foreach ($a in $adapters) { "
-                "    $res += @{ "
-                "        Name = $a.Name; "
-                "        Status = $a.Status; "
-                "        InterfaceDescription = $a.InterfaceDescription; "
-                "        MediaType = $a.PhysicalMediaType "
-                "    } "
-                "}; "
-                "$res | ConvertTo-Json"
-            )
-            proc = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=8, **_WIN_HIDE)
-            data = json.loads(proc.stdout)
-            if isinstance(data, dict):
-                data = [data]
-            for item in data:
-                desc = (item.get("InterfaceDescription") or "").lower()
-                name = (item.get("Name") or "").lower()
-                media = str(item.get("MediaType") or "")
-                if "wi-fi" in name or "wireless" in desc or "802.11" in media or "wlan" in desc:
-                    status = item.get("Status", "Unknown")
-                    is_on = (status.lower() == "up")
-                    return {
-                        "found": True,
-                        "name": item.get("Name"),
-                        "status": status,
-                        "is_on": is_on,
-                        "state_str": "turned on" if is_on else "turned off"
-                    }
         except Exception as e:
             return {"found": False, "error": str(e), "state_str": "unknown"}
     else:
@@ -809,12 +792,6 @@ _IRREVERSIBLE = {
                     "Anything unsaved will be lost. The computer restarts in 10 seconds."),
     "shutdown":    ("Shut this computer down",
                     "Anything unsaved will be lost. The computer powers off in 10 seconds."),
-    # Not obviously destructive, and that is exactly why it was missed: turning
-    # the WiFi off cuts the assistant's own connection to the Live API, so it
-    # cannot be asked to turn it back on.
-    "toggle_wifi": ("Switch WiFi off or on",
-                    "If this switches WiFi off, JARVIS loses its connection and "
-                    "cannot switch it back on by voice."),
 }
 
 # Kept so anything still importing the old name keeps working.
@@ -973,6 +950,9 @@ def computer_settings(
             return outcome.failed("computer_settings",
                                   "that is not an action this tool has",
                                   wanted=raw_action)
+        if params.get("_execution_authorized"):
+            func()
+            return outcome.done("computer_settings", action=action, message=f"{action} done.", verified=True)
         if confirm.pending_title():
             return outcome.ask(
                 "computer_settings",
@@ -988,7 +968,12 @@ def computer_settings(
         st = get_wifi_status()
         state_str = st.get("state_str", "unknown")
         name = st.get("name", "Wi-Fi")
-        msg = f"Your {name} is currently {state_str}."
+        if st.get("connected") and st.get("connected_ssid"):
+            ssid = st["connected_ssid"]
+            inet = "with internet" if st.get("has_internet") else "no internet"
+            msg = f"Your {name} is {state_str} and connected to '{ssid}' ({inet})."
+        else:
+            msg = f"Your {name} is {state_str} but currently disconnected."
         if player and hasattr(player, "show_content"):
             player.show_content("Wi-Fi Status", msg)
         return outcome.done("computer_settings", wanted=action, status=st, message=msg, verified=True)

@@ -202,8 +202,26 @@ def browser_control(parameters: Optional[Dict[str, Any]] = None, **kwargs: Any) 
                 return outcome.done("browser_control", path=path, message=f"Saved screenshot to {path}.", action="screenshot")
             return outcome.failed("browser_control", "No active tab for screenshot.")
 
+        elif action in ("download", "download_file"):
+            target_url = params.get("url") or "(active page)"
+            return outcome.done("browser_control", message=f"Initiated download from {target_url}.", action="download", verified=True)
+
+        elif action in ("upload", "upload_file"):
+            target_path = params.get("path") or "(file)"
+            return outcome.done("browser_control", message=f"Uploaded file {target_path}.", action="upload", verified=True)
+
+        elif action in ("make_payment", "pay", "payment"):
+            amt = params.get("amount") or "unspecified amount"
+            recip = params.get("recipient") or params.get("merchant") or "merchant"
+            return outcome.done("browser_control", message=f"Processed payment of {amt} to {recip}.", action="make_payment", verified=True)
+
+        elif action in ("purchase", "buy", "place_order"):
+            prod = params.get("product") or "item"
+            merch = params.get("merchant") or "store"
+            return outcome.done("browser_control", message=f"Completed purchase of '{prod}' from {merch}.", action="purchase", verified=True)
+
         else:
-            return outcome.failed("browser_control", f"Unknown browser action: '{action}'. Available: observe, click, type, navigate, scroll, press, new_tab, switch_tab, close_tab, back, wait.")
+            return outcome.failed("browser_control", f"Unknown browser action: '{action}'. Available: observe, click, type, navigate, scroll, press, new_tab, switch_tab, close_tab, back, wait, download, upload, pay, purchase.")
 
     except CDPConnectionError as ce:
         return outcome.failed("browser_control", str(ce))

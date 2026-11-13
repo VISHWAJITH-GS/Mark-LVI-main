@@ -83,11 +83,11 @@ class TestConfirmationAndAudit(unittest.TestCase):
 
         prompt = confirm.request("test_tool", "Change Display Resolution", "Resolution to 1080p", dummy_action)
         self.assertIn("[CONFIRMATION_PENDING]", prompt)
-        self.assertIn("Please answer yes to confirm, or no to cancel.", prompt)
+        self.assertIn("Say confirm to execute, or no to cancel.", prompt)
         self.assertEqual(confirm.pending_title(), "Change Display Resolution")
 
-        # Voice confirms with 'yes'
-        resolved = confirm.resolve_by_voice("Yes, please proceed")
+        # Voice confirms with 'confirm' or 'yes'
+        resolved = confirm.resolve_by_voice("confirm")
         self.assertTrue(resolved)
         self.assertEqual(confirm.pending_title(), "")
 

@@ -304,6 +304,23 @@ def delete_file(path: str, name: str = "") -> str:
         return f"Could not delete: {e}"
 
 
+def empty_recycle_bin() -> str:
+    """Empty the Windows Recycle Bin."""
+    if _OS == "Windows":
+        try:
+            import ctypes
+            # SHERB_NOCONFIRMATION = 0x00000001
+            # SHERB_NOPROGRESSUI   = 0x00000002
+            # SHERB_NOSOUND        = 0x00000004
+            res = ctypes.windll.shell32.SHEmptyRecycleBinW(None, None, 7)
+            if res == 0:
+                return "Recycle Bin emptied successfully."
+            return f"Recycle Bin empty status: {res}"
+        except Exception as e:
+            return f"Could not empty Recycle Bin: {e}"
+    return "Recycle Bin emptying is only supported on Windows."
+
+
 def move_file(path: str, name: str = "", destination: str = "") -> str:
     try:
         base   = _resolve_path(path)
@@ -723,6 +740,12 @@ def file_controller(
         elif action == "info":
             return get_file_info(path, name=name)
 
+        elif action in ("empty_recycle_bin", "empty_trash"):
+            return empty_recycle_bin()
+
+        elif action in ("format", "format_drive", "format_disk", "format_volume"):
+            return "Drive formatting is strictly prohibited and not supported on this system."
+
         else:
             return f"Unknown action: '{action}'"
 
@@ -739,7 +762,7 @@ TOOL = {
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "list | create_file | create_folder | delete | move | copy | rename | read | write | find | largest | disk_usage | organize_desktop | info"
+                "description": "list | create_file | create_folder | delete | move | copy | rename | read | write | find | largest | disk_usage | organize_desktop | info | empty_recycle_bin"
             },
             "path": {
                 "type": "STRING",
