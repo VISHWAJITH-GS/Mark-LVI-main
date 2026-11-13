@@ -846,8 +846,8 @@ _ALIASES = {
     "lock_screen":     ("lock", "lock the pc", "lock computer"),
     "sleep_display":   ("screen off", "turn off the screen", "display off"),
     "dark_mode":       ("night mode", "light mode", "toggle theme"),
-    "toggle_wifi":     ("wifi", "wi-fi", "internet off", "internet on"),
-    "wifi_status":     ("check wifi", "wifi status", "is wifi on", "is wifi turned on", "is wi-fi on", "is wifi off", "wifi turned on or off", "check my wifi"),
+    "wifi_status":     ("check wifi", "wifi status", "is wifi on", "is wifi turned on", "is wi-fi on", "is wifi off", "wifi turned on or off", "check my wifi", "check the wifi", "check if wifi", "turned on or turned off", "is it turned on or off", "is it on or off"),
+    "toggle_wifi":     ("toggle wifi", "switch wifi", "turn on wifi", "turn off wifi", "disable wifi", "enable wifi", "disconnect wifi", "connect wifi", "internet off", "internet on"),
     "task_manager":    ("processes", "task list"),
     "screenshot":      ("capture screen", "take a screenshot", "snip"),
     "refresh_page":    ("refresh", "reload page"),
@@ -882,6 +882,15 @@ def _detect_action(description: str) -> dict:
         return {"action": norm, "value": None}
 
     low = raw.lower()
+    # Canonicalize wifi variations
+    low_canon = re.sub(r"wi[- ]?fi", "wifi", low)
+
+    # Wi-Fi status check intent vs toggle intent
+    if "wifi" in low_canon:
+        if any(w in low_canon for w in ("check", "status", "is it", "turned on or off", "turned on or turned off", "on or off", "state")):
+            return {"action": "wifi_status", "value": None}
+        if any(w in low_canon for w in ("toggle", "switch", "turn on", "turn off", "enable", "disable", "connect", "disconnect")):
+            return {"action": "toggle_wifi", "value": None}
 
     # 2. "set volume to 30", "sesi 30 yap" — a number next to a volume word.
     num = re.search(r"(\d{1,3})\s*%?", low)
@@ -1121,7 +1130,7 @@ def computer_settings(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "computer_settings",
-    "description": "Controls the computer: volume, brightness, window management, keyboard shortcuts, typing text on screen, closing apps, fullscreen, dark mode, WiFi, restart, shutdown, scrolling, tab management, zoom, screenshots, lock screen, refresh/reload page. Use for ANY single computer control command. restart, shutdown and toggle_wifi put a confirmation on the user's screen and do NOT happen until they press it — never claim they are done. Volume, brightness and dark mode can be reversed with the `undo` tool.",
+    "description": "Controls the computer: volume, brightness, window management, keyboard shortcuts, typing text on screen, closing apps, fullscreen, dark mode, checking Wi-Fi status (wifi_status), toggle Wi-Fi (toggle_wifi), restart, shutdown, scrolling, tab management, zoom, screenshots, lock screen, refresh/reload page. Use for ANY single computer control command. Checking Wi-Fi status (wifi_status) executes immediately with NO confirmation. Only restart, shutdown, and toggle_wifi require user confirmation. Volume, brightness and dark mode can be reversed with the `undo` tool.",
     # Used in place of `description` only when a small model is on a tool
     # budget - Gemini still gets the full text. See providers/schema.py.
     "brief": (
@@ -1131,20 +1140,11 @@ TOOL = {
         "type": "OBJECT",
         "properties": {
             # The exact vocabulary, spelled out.
-            #
-            # This used to say only "The action to perform", so the model
-            # usually filled `description` instead — and computer_settings then
-            # made a SECOND Gemini call, inside the tool, purely to translate
-            # that sentence into one of these names. Every "turn the volume
-            # down" cost two model round trips.
-            #
-            # Naming the actions here costs ~600 characters once per session and
-            # removes a whole round trip from every computer command.
             "action": {
                 "type": "STRING",
                 "description": (
                     "The exact action. Prefer this over `description` — pick one of: "
-                    "volume_up | volume_down | volume_set | mute | "
+                    "wifi_status | toggle_wifi | volume_up | volume_down | volume_set | mute | "
                     "brightness_up | brightness_down | sleep_display | "
                     "pause_video | close_window | full_screen | "
                     "minimize | maximize | snap_left | snap_right | "
@@ -1155,7 +1155,7 @@ TOOL = {
                     "scroll_bottom | page_up | page_down | copy | paste | cut | "
                     "undo | redo | select_all | save | enter | escape | press_key | "
                     "type_text | screenshot | lock_screen | open_settings | "
-                    "file_explorer | open_run | dark_mode | toggle_wifi | "
+                    "file_explorer | open_run | dark_mode | "
                     "restart | shutdown"
                 )
             },

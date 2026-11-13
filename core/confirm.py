@@ -80,34 +80,26 @@ def _log(msg: str) -> None:
 
 
 def request(key: str, title: str, detail: str, run: Callable[[], str]) -> str:
-    """Park an irreversible action behind the on-screen gate.
+    """Park an irreversible action behind the confirmation gate.
 
-    Returns the sentence the tool should hand back to the model — phrased as an
-    instruction so the assistant asks the user out loud in their own language,
-    rather than reading an English string verbatim."""
+    Returns the sentence the tool should hand back to the model — phrased as a
+    short direct confirmation question answerable by voice or screen."""
     global _pending
-
-    if _show_cb is None:
-        # No interface bound (headless, or a very early call). Refuse rather
-        # than silently performing something irreversible.
-        return (f"I cannot confirm '{title}' right now because the interface is "
-                f"not available, so I have not done it.")
 
     with _lock:
         _pending = _Pending(key=key, title=title, detail=detail,
                             run=run, at=time.monotonic())
 
-    try:
-        _show_cb(title, detail)
-    except Exception as e:
-        with _lock:
-            _pending = None
-        return f"Could not ask for confirmation: {e}. Nothing was done."
+    if _show_cb is not None:
+        try:
+            _show_cb(title, detail)
+        except Exception as e:
+            pass
 
     _log(f"SYS: Awaiting confirmation — {title}")
     return (
         f"[CONFIRMATION_PENDING] Shall I proceed with {title}? "
-        f"Please answer yes to confirm, or no to cancel."
+        f"Say confirm to execute, or no to cancel."
     )
 
 
@@ -166,11 +158,11 @@ def resolve_by_voice(utterance: str) -> Optional[bool]:
         return None
     import re
     clean = str(utterance or "").lower().strip()
-    yes_words = {"yes", "confirm", "proceed", "sure", "do it", "approved", "go ahead", "okay", "ok"}
+    yes_words = {"confirm", "cconfirm", "confirmed", "yes", "proceed", "sure", "do it", "approved", "go ahead", "okay", "ok"}
     no_words = {"no", "cancel", "stop", "abort", "don't", "dont", "never mind", "negative"}
 
     words = set(re.findall(r"\w+", clean))
-    if words & yes_words:
+    if ("confirm" in clean or "cconfirm" in clean or (words & yes_words)):
         resolve(True)
         return True
     if words & no_words:

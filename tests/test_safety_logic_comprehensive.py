@@ -177,7 +177,7 @@ class TestSafetyLogicComprehensive(unittest.TestCase):
         executed = []
         msg = confirm.request("test_key", "Reboot System", "Restarting OS", lambda: (executed.append(True) or "Rebooting"))
         self.assertIn("[CONFIRMATION_PENDING]", msg)
-        self.assertIn("Please answer yes to confirm, or no to cancel.", msg)
+        self.assertIn("Say confirm to execute, or no to cancel.", msg)
         self.assertEqual(confirm.pending_title(), "Reboot System")
 
         # Test voice rejection

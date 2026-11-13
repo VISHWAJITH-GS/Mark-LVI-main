@@ -1901,6 +1901,18 @@ class JarvisLive:
                                 self._last_out_logged = ""   # new exchange
                                 self.ui.write_log(f"You: {full_in}")
                                 self._session_log.append(f"User: {full_in}")
+
+                                # Direct voice resolution for pending confirmations
+                                try:
+                                    if confirm_gate.pending_title():
+                                        voice_res = confirm_gate.resolve_by_voice(full_in)
+                                        if voice_res is True:
+                                            self.ui.write_log("SYS: Confirmation accepted via voice.")
+                                        elif voice_res is False:
+                                            self.ui.write_log("SYS: Confirmation rejected via voice.")
+                                except Exception as c_err:
+                                    print(f"[Confirm] Voice check error: {c_err}")
+
                                 if self._dashboard:
                                     asyncio.create_task(self._dashboard.broadcast({
                                         "type": "log", "speaker": "user",
@@ -2131,8 +2143,17 @@ class JarvisLive:
         lang = _val("language")
         name = _val("name")
         now = datetime.now()
+        hour = now.hour
+        if hour < 12:
+            period = "Good morning"
+        elif hour < 17:
+            period = "Good afternoon"
+        else:
+            period = "Good evening"
+
         time_str = now.strftime("%I:%M %p").lstrip("0")
         date_str = now.strftime("%A, %B %d, %Y")
+        greeting_text = f"{period}, sir! It is {time_str}, {date_str}."
 
         await asyncio.sleep(0.3)
         if not self.session:
@@ -2145,9 +2166,9 @@ class JarvisLive:
         await asyncio.to_thread(pop_last_session)
 
         prompt = (
-            f"Greet the user stating the time ({time_str}) and date ({date_str}) only. "
+            f"Say exactly: '{greeting_text}'. "
             f"Do not include any motivational speech, talks, inspiration, advice, session recap, or extra commentary. "
-            f"Speak little: exactly one short, sharp, and clear sentence. Do not call any tools.{lang_clause}{name_clause}"
+            f"Speak little: exactly that short greeting with time and date and stop. Do not call any tools.{lang_clause}{name_clause}"
         )
 
         # Clear the turn-done event so we can wait for Phase 1 to finish
