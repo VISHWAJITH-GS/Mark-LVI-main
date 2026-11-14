@@ -103,10 +103,14 @@ def _launch_windows(app_name: str) -> bool:
       3. the Start Menu, typed like a person would.
     """
     resolved = shutil.which(app_name)
+    extra_args = []
+    if "msedge" in app_name.lower() or (resolved and "msedge" in resolved.lower()):
+        extra_args = ["--remote-debugging-port=9222"]
+
     if resolved:
         try:
             subprocess.Popen(
-                [resolved],
+                [resolved] + extra_args,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )

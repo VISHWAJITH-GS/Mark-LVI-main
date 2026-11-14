@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("browser_session")
 
-DEFAULT_CDP_URL = "http://localhost:9222"
+DEFAULT_CDP_URL = "http://127.0.0.1:9222"
 
 
 class CDPConnectionError(RuntimeError):
@@ -125,17 +125,26 @@ class BrowserSessionManager:
     def check_connection(self, timeout: float = 2.0) -> Tuple[bool, str]:
         """
         Pings /json/version on the CDP endpoint to verify Edge is running with debugging enabled.
+        Tries both configured URL and 127.0.0.1 fallback to prevent Windows IPv6 localhost delays.
         """
-        target = f"{self.cdp_url.rstrip('/')}/json/version"
-        try:
-            req = urllib.request.Request(target, headers={"User-Agent": "JARVIS-BrowserEngine"})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                if resp.status == 200:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    browser_name = data.get("Browser", "Chromium/Edge")
-                    return True, f"Connected to {browser_name}"
-        except Exception as e:
-            pass
+        urls_to_try = [self.cdp_url]
+        if "localhost" in self.cdp_url:
+            urls_to_try.append(self.cdp_url.replace("localhost", "127.0.0.1"))
+        elif "127.0.0.1" in self.cdp_url:
+            urls_to_try.append(self.cdp_url.replace("127.0.0.1", "localhost"))
+
+        for url in urls_to_try:
+            target = f"{url.rstrip('/')}/json/version"
+            try:
+                req = urllib.request.Request(target, headers={"User-Agent": "JARVIS-BrowserEngine"})
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    if resp.status == 200:
+                        data = json.loads(resp.read().decode("utf-8"))
+                        browser_name = data.get("Browser", "Chromium/Edge")
+                        self.cdp_url = url
+                        return True, f"Connected to {browser_name}"
+            except Exception:
+                continue
 
         err_msg = (
             f"[CDP Connection Error] Cannot connect to Microsoft Edge at {self.cdp_url}.\n"
@@ -147,14 +156,48 @@ class BrowserSessionManager:
         )
         return False, err_msg
 
-    # ── Live Edge Attachment ──────────────────────────────────────────────────
+    # ── Live Edge / Chrome Attachment ──────────────────────────────────────────
+
+    def _try_auto_launch(self) -> bool:
+        """Attempt to auto-launch Chrome or Edge with remote debugging if not already running."""
+        import subprocess
+        candidates = [
+            (r"C:\Program Files\Google\Chrome\Application\chrome.exe", os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data\JarvisProfile")),
+            (r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe", os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data\JarvisProfile")),
+            (r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe", os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data\JarvisProfile")),
+            (r"C:\Program Files\Microsoft\Edge\Application\msedge.exe", os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data\JarvisProfile")),
+        ]
+        for exe, profile in candidates:
+            if os.path.exists(exe):
+                try:
+                    os.makedirs(profile, exist_ok=True)
+                    cmd = [
+                        exe,
+                        "--remote-debugging-port=9222",
+                        f"--user-data-dir={profile}",
+                        "--remote-allow-origins=*",
+                    ]
+                    flags = subprocess.DETACHED_PROCESS if os.name == "nt" else 0
+                    subprocess.Popen(cmd, creationflags=flags)
+                    for _ in range(8):
+                        time.sleep(0.5)
+                        ok, _ = self.check_connection(timeout=0.5)
+                        if ok:
+                            logger.info(f"Auto-launched browser {exe} with remote debugging.")
+                            return True
+                except Exception as e:
+                    logger.debug(f"Auto-launch attempt failed for {exe}: {e}")
+        return False
 
     async def _ensure_attached(self):
         """
-        Connects over CDP to the running Edge instance.
+        Connects over CDP to the running Chrome / Edge instance.
         Attaches strictly to browser.contexts[0]. NEVER calls .launch() or creates a fresh context.
         """
         ok, err = self.check_connection(timeout=2.0)
+        if not ok:
+            if self._try_auto_launch():
+                ok = True
         if not ok:
             raise CDPConnectionError(err)
 

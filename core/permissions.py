@@ -665,21 +665,34 @@ class ActionExecutionGuard:
         return res
 
 
+_CTX_KEYS = ("player", "response", "session_memory", "speak")
+
+
 def _call_handler_safe(fn: Callable, parameters: dict, ctx: dict) -> Any:
-    """Invoke handler safely matching only declared parameters."""
+    """Invoke the handler passing parameters dict or individual kwargs based on signature."""
     sig = inspect.signature(fn)
-    has_kwargs = any(
-        p.kind == inspect.Parameter.VAR_KEYWORD
-        for p in sig.parameters.values()
-    )
-    call_kwargs = dict(parameters)
-    if has_kwargs:
-        call_kwargs.update(ctx)
+    has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+
+    # Filter context arguments
+    kwargs = {}
+    for key in _CTX_KEYS:
+        if has_var_kw or key in sig.parameters:
+            kwargs[key] = ctx.get(key)
+
+    # Standard JARVIS tool handlers accept (parameters: dict, ...)
+    if "parameters" in sig.parameters:
+        return fn(parameters=parameters, **kwargs)
+    elif has_var_kw:
+        try:
+            return fn(parameters=parameters, **kwargs)
+        except TypeError:
+            clean_args = dict(parameters)
+            clean_args.update(kwargs)
+            return fn(**clean_args)
     else:
-        for k, v in ctx.items():
-            if k in sig.parameters:
-                call_kwargs[k] = v
-    return fn(**call_kwargs)
+        clean_args = {k: v for k, v in parameters.items() if k in sig.parameters}
+        clean_args.update(kwargs)
+        return fn(**clean_args)
 
 
 # ── Backward Compatibility API ──────────────────────────────────────────────

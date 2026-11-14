@@ -96,8 +96,8 @@ class ActionExecutor:
         if not elem:
             return f"[Error] Element index [{index}] not found in latest observation. Call observe_page to refresh."
 
-        page = self.session_mgr.active_page
         cdp = await self.session_mgr._get_cdp_session()
+        page = self.session_mgr.active_page
         await self.distiller.remove_som_overlay(page)
 
         # Resolve coordinates: try CDP BoxModel first, fallback to bounding box center
@@ -130,8 +130,8 @@ class ActionExecutor:
         if not elem:
             return f"[Error] Element index [{index}] not found in latest observation. Call observe_page to refresh."
 
-        page = self.session_mgr.active_page
         cdp = await self.session_mgr._get_cdp_session()
+        page = self.session_mgr.active_page
         await self.distiller.remove_som_overlay(page)
 
         x, y = elem.bounding_box.center
@@ -178,8 +178,8 @@ class ActionExecutor:
         """
         Scrolls the active page up or down using hardware mouseWheel events.
         """
-        page = self.session_mgr.active_page
         cdp = await self.session_mgr._get_cdp_session()
+        page = self.session_mgr.active_page
         await self.distiller.remove_som_overlay(page)
 
         cx, cy = 600.0, 400.0
@@ -204,8 +204,8 @@ class ActionExecutor:
         if not elem:
             return f"[Error] Element index [{index}] not found in latest observation."
 
-        page = self.session_mgr.active_page
         cdp = await self.session_mgr._get_cdp_session()
+        page = self.session_mgr.active_page
         await self.distiller.remove_som_overlay(page)
 
         x, y = elem.bounding_box.center
@@ -226,8 +226,8 @@ class ActionExecutor:
         """
         Dispatches hardware key down and up events (e.g. Escape, Enter, Tab).
         """
-        page = self.session_mgr.active_page
         cdp = await self.session_mgr._get_cdp_session()
+        page = self.session_mgr.active_page
         await self.distiller.remove_som_overlay(page)
 
         key_info = KEY_MAP.get(key, {
@@ -261,8 +261,13 @@ class ActionExecutor:
         """
         Navigates active tab to a URL.
         """
-        page = self.session_mgr.active_page
         cdp = await self.session_mgr._get_cdp_session()
+        page = self.session_mgr.active_page
+        if not page or page.is_closed():
+            page = await self.session_mgr._context.new_page()
+            self.session_mgr._active_page = page
+            cdp = await self.session_mgr._get_cdp_session()
+
         await self.distiller.remove_som_overlay(page)
 
         clean_url = url.strip()
@@ -287,8 +292,8 @@ class ActionExecutor:
         """
         Navigates back in browser history.
         """
-        page = self.session_mgr.active_page
         cdp = await self.session_mgr._get_cdp_session()
+        page = self.session_mgr.active_page
         await self.distiller.remove_som_overlay(page)
         await page.go_back(wait_until="domcontentloaded", timeout=15000)
         header, obs = await self._post_action_refresh(page, cdp, delay=0.5)
@@ -298,8 +303,8 @@ class ActionExecutor:
         """
         Waits for a given duration then updates the page observation.
         """
-        page = self.session_mgr.active_page
         cdp = await self.session_mgr._get_cdp_session()
+        page = self.session_mgr.active_page
         await asyncio.sleep(min(seconds, 30.0))
         header, obs = await self._post_action_refresh(page, cdp, delay=0.1)
         return f"Waited {seconds}s.\n{header}\nUpdated Elements:\n{obs}"

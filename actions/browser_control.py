@@ -50,8 +50,11 @@ def browser_control(parameters: Optional[Dict[str, Any]] = None, **kwargs: Any) 
     session_mgr = get_browser_session_manager()
 
     try:
-        # Check connection guard
+        # Check connection guard with auto-launch fallback
         ok, err_msg = session_mgr.check_connection(timeout=1.5)
+        if not ok and hasattr(session_mgr, "_try_auto_launch"):
+            if session_mgr._try_auto_launch():
+                ok = True
         if not ok:
             return outcome.failed("browser_control", err_msg)
 
