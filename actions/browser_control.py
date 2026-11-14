@@ -252,7 +252,7 @@ TOOL = {
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "observe | click | type | navigate | scroll | press | new_tab | switch_tab | close_tab | back | wait | screenshot"
+                "description": "observe | click | hint_click | hint_scroll | vimium_command | get_hints | type | navigate | scroll | press | new_tab | switch_tab | close_tab | back | wait | screenshot"
             },
             "index": {
                 "type": "INTEGER",

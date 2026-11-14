@@ -887,17 +887,11 @@ def type_text(
                 pyautogui.press("delete")
                 time.sleep(0.05)
             text_str = str(text or "")
-            if "\n" in text_str:
-                lines = text_str.split("\n")
-                for idx, line in enumerate(lines):
-                    if idx > 0:
-                        pyautogui.press("enter")
-                        time.sleep(0.02)
-                        pyautogui.hotkey("shift", "home")
-                        pyautogui.press("backspace")
-                        time.sleep(0.01)
-                    if line:
-                        pyautogui.write(line, interval=0.008)
+            if ("\n" in text_str or "\r" in text_str) and _PYPERCLIP:
+                pyperclip.copy(text_str)
+                time.sleep(0.05)
+                pyautogui.hotkey("ctrl", "v")
+                time.sleep(0.05)
             else:
                 pyautogui.write(text_str, interval=0.008)
         elif send_keys:

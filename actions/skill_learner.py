@@ -12,6 +12,7 @@ Exposes the Learning-by-Demonstration Skill Engine to Gemini Live and the Autono
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, Optional
 
 from core import outcome
@@ -31,13 +32,24 @@ def skill_learner(
     p = dict(parameters or {})
     p.update(kwargs)
 
-    action = p.get("action", "")
+    action_raw = str(p.get("action", "")).strip()
     goal = p.get("goal")
     skill_id = p.get("skill_id")
     skill_params = p.get("parameters")
 
+    # Detect explicit user approval flags passed in parameters or kwargs
+    approve_skill_flag = bool(p.get("approve_skill") or p.get("approved") or p.get("confirm"))
+
+    # Handle model hallucinations where parameters are combined into action string,
+    # e.g. "execute_skill, approve_skill:True"
+    if "approve_skill" in action_raw.lower() or "approve" in action_raw.lower():
+        if "true" in action_raw.lower() or "1" in action_raw.lower():
+            approve_skill_flag = True
+
+    # Normalize primary action name: take first token before comma/semicolon/colon
+    act = re.split(r"[,;:]", action_raw)[0].strip().lower()
+
     manager = get_default_learning_manager()
-    act = str(action or "").lower().strip()
 
     if act in ("start_learning", "start", "learn"):
         if not goal:
@@ -123,7 +135,7 @@ def skill_learner(
         msg = f"Found {len(skills)} learned skills in library."
         return outcome.done("skill_learner", message=msg, data={"skills": summaries})
 
-    elif act in ("execute_skill", "run_skill", "execute"):
+    elif act in ("execute_skill", "run_skill", "execute", "run"):
         target_id = skill_id or p.get("goal")
         if not target_id:
             if manager.current_session and manager.current_session.generated_skill:
@@ -142,6 +154,10 @@ def skill_learner(
             except Exception:
                 params_dict = {}
 
+        if approve_skill_flag:
+            params_dict["__user_confirmed__"] = True
+            params_dict["approve_skill"] = True
+
         return manager.execute_skill(
             skill_id=target_id,
             parameters=params_dict,
@@ -154,7 +170,7 @@ def skill_learner(
             return outcome.failed("skill_learner", "skill_id is required to delete a skill.")
         return manager.delete_skill(skill_id=skill_id)
 
-    return outcome.failed("skill_learner", f"Unknown skill_learner action: '{action}'")
+    return outcome.failed("skill_learner", f"Unknown skill_learner action: '{action_raw}'")
 
 
 TOOL = {
@@ -187,6 +203,10 @@ TOOL = {
             "skill_id": {
                 "type": "STRING",
                 "description": "The unique ID of the skill to test, approve, execute, or delete.",
+            },
+            "approve_skill": {
+                "type": "BOOLEAN",
+                "description": "Explicit user approval to execute skills containing sensitive actions (set to true when user confirms execution).",
             },
             "parameters": {
                 "type": "OBJECT",

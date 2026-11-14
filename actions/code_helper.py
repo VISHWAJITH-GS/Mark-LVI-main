@@ -522,6 +522,19 @@ Be specific and actionable. If you see an error message, quote it exactly."""
         return f"Screen analysis failed: {e}"
 
 
+def _insert_code_action(description: str, language: str, code_str: str, editor: str, player=None) -> str:
+    """Generate or take code and insert it directly into the target editor via clipboard."""
+    from actions.computer_control import _insert_code
+    code_to_insert = code_str
+    if not code_to_insert:
+        if not description:
+            return "Please provide code or a description of the code to generate and insert."
+        # Generate code with Gemini
+        code_to_insert, _ = _write(description, language, "", player=player)
+
+    return _insert_code(code=code_to_insert, editor_title=editor, language=language)
+
+
 def code_helper(
     parameters: dict,
     response=None,
@@ -533,12 +546,13 @@ def code_helper(
     Called from main.py.
 
     parameters:
-        action      : write | edit | explain | run | build | screen_debug | optimize | auto
+        action      : write | edit | explain | run | build | screen_debug | optimize | insert_code | type_code | auto
         description : What the code should do / what change to make / what problem to analyze
         language    : Programming language (default: python)
         output_path : Where to save — user specifies full path or filename
         file_path   : Path to existing file (edit / explain / run / build / optimize)
-        code        : Raw code string (explain/optimize without a file)
+        code        : Raw code string (explain/optimize/insert without a file)
+        editor      : Target editor name (e.g. Notepad, IDLE, Visual Studio Code)
         args        : CLI argument list for run/build
         timeout     : Execution timeout in seconds (default: 30)
     """
@@ -549,6 +563,7 @@ def code_helper(
     output_path = p.get("output_path", "").strip()
     file_path   = p.get("file_path", "").strip()
     code        = p.get("code", "").strip()
+    editor      = p.get("editor") or p.get("target") or "Notepad"
     args        = p.get("args", [])
     timeout     = int(p.get("timeout", 30))
 
@@ -558,6 +573,9 @@ def code_helper(
 
     if action == "write":
         return _write_action(description, language, output_path, player)
+
+    elif action in ("insert_code", "type_code", "type", "insert"):
+        return _insert_code_action(description, language, code, editor, player)
 
     elif action == "edit":
         return _edit_action(
@@ -582,19 +600,19 @@ def code_helper(
         return _screen_debug_action(description, file_path, player, speak)
 
     else:
-        return f"Unknown action: '{action}'. Use write, edit, explain, run, build, optimize, or screen_debug."
+        return f"Unknown action: '{action}'. Use write, edit, explain, run, build, optimize, insert_code, or screen_debug."
 
 
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "code_helper",
-    "description": "Writes, edits, explains, runs, or builds code files.",
+    "description": "Writes, edits, explains, runs, builds, or inserts code into editors.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "write | edit | explain | run | build | auto (default: auto)"
+                "description": "write | edit | explain | run | build | insert_code | type_code | auto (default: auto)"
             },
             "description": {
                 "type": "STRING",
@@ -602,7 +620,11 @@ TOOL = {
             },
             "language": {
                 "type": "STRING",
-                "description": "Programming language (default: python)"
+                "description": "Programming language: python | c | cpp | java | javascript | html | css | sql (default: python)"
+            },
+            "editor": {
+                "type": "STRING",
+                "description": "Target editor window for insert_code: Notepad | IDLE | Visual Studio Code"
             },
             "output_path": {
                 "type": "STRING",
@@ -614,7 +636,7 @@ TOOL = {
             },
             "code": {
                 "type": "STRING",
-                "description": "Raw code string for explain"
+                "description": "Raw code string for explain or insert_code"
             },
             "args": {
                 "type": "STRING",

@@ -101,22 +101,28 @@ def sanitize_input_value(control_info: dict, text_value: str) -> str:
 
 
 def classify_skill_risk(steps: list[StepDefinition], description: str = "") -> RiskLevel:
-    """Determine the effective security RiskLevel for a skill."""
-    full_text = description.lower()
+    """Determine the effective security RiskLevel for a skill using word-boundary matching."""
+    full_text = (description or "").lower()
     for s in steps:
-        full_text += " " + s.thought.lower() + " " + s.tool.lower() + " " + str(s.parameters).lower()
+        thought_str = getattr(s, "thought", "") or ""
+        tool_str = getattr(s, "tool", "") or ""
+        params_str = str(getattr(s, "parameters", ""))
+        full_text += f" {thought_str} {tool_str} {params_str}".lower()
+
+    words = set(re.findall(r"\b\w+\b", full_text))
 
     for act in _DESTRUCTIVE_ACTIONS:
-        if act in full_text:
+        if act in words:
             return RiskLevel.DESTRUCTIVE
 
     for act in _SENSITIVE_ACTIONS:
-        if act in full_text:
+        if act in words:
             return RiskLevel.SENSITIVE
 
     # Check tools
     for s in steps:
-        if s.tool in ("computer_control", "windows_control", "dev_agent"):
+        tool_name = getattr(s, "tool", "")
+        if tool_name in ("computer_control", "windows_control", "dev_agent"):
             return RiskLevel.SENSITIVE
 
     return RiskLevel.NORMAL

@@ -89,23 +89,93 @@ def _desktop_search(app_name: str) -> bool:
         return False
 
 
+def _resolve_windows_known_app(app_name: str) -> tuple[list[str] | None, list[str]]:
+    """Resolve well-known Windows desktop applications that are not typically placed on PATH."""
+    clean = str(app_name or "").lower().strip()
+
+    # 1. Google Chrome (prioritize Chrome when specifically requested)
+    if clean in ("chrome", "google chrome", "google-chrome"):
+        for path in (
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        ):
+            if os.path.exists(path):
+                profile_dir = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data\JarvisProfile")
+                os.makedirs(profile_dir, exist_ok=True)
+                return [path], [
+                    "--remote-debugging-port=9222",
+                    f"--user-data-dir={profile_dir}",
+                    "--remote-allow-origins=*",
+                ]
+
+    # 2. Microsoft Edge
+    if clean in ("msedge", "edge", "microsoft edge"):
+        for path in (
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        ):
+            if os.path.exists(path):
+                profile_dir = os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data\JarvisProfile")
+                os.makedirs(profile_dir, exist_ok=True)
+                return [path], [
+                    "--remote-debugging-port=9222",
+                    f"--user-data-dir={profile_dir}",
+                    "--remote-allow-origins=*",
+                ]
+
+    # 3. Python IDLE
+    if clean in ("idle", "python idle", "idle python", "idle3"):
+        import sys
+        base_dir = os.path.dirname(sys.executable)
+        pythonw = os.path.join(base_dir, "pythonw.exe")
+        exe = pythonw if os.path.exists(pythonw) else sys.executable
+        return [exe, "-m", "idlelib"], []
+
+    # 4. VS Code
+    if clean in ("code", "vscode", "visual studio code"):
+        user_code = os.path.expandvars(r"%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe")
+        if os.path.exists(user_code):
+            return [user_code], []
+        prog_code = r"C:\Program Files\Microsoft VS Code\Code.exe"
+        if os.path.exists(prog_code):
+            return [prog_code], []
+
+    # 5. Notepad
+    if clean in ("notepad", "notepad.exe"):
+        return ["notepad.exe"], []
+
+    return None, []
+
+
 def _launch_windows(app_name: str) -> bool:
     """-> was a launch REQUESTED successfully. Never 'did it open'.
 
-    Three routes, none of them a shell:
+    Four routes, none of them a shell:
 
-      1. an executable on PATH, started as a one-element argument vector. The
-         old code passed the raw string with shell=True, which is what let
-         "notepad.exe & whoami" run two things.
-      2. a URI scheme such as `ms-settings:` — handed to the OS handler with
-         os.startfile, which is what the shell would have called anyway,
-         without a command line for anything to be appended to.
-      3. the Start Menu, typed like a person would.
+      1. Well-known desktop apps (Chrome, Edge, IDLE, VS Code, Notepad) resolved by disk path.
+      2. An executable on PATH, started as a one-element argument vector.
+      3. A URI scheme such as `ms-settings:` — handed to the OS handler with os.startfile.
+      4. The Start Menu search, typed like a person would.
     """
+    known_cmd, known_args = _resolve_windows_known_app(app_name)
+    if known_cmd:
+        try:
+            subprocess.Popen(
+                known_cmd + known_args,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return True
+        except Exception as exc:
+            print(f"[open_app] Popen failed for known app {known_cmd!r}: {exc}")
+
     resolved = shutil.which(app_name)
     extra_args = []
     if "msedge" in app_name.lower() or (resolved and "msedge" in resolved.lower()):
         extra_args = ["--remote-debugging-port=9222"]
+    elif "chrome" in app_name.lower() or (resolved and "chrome" in resolved.lower()):
+        extra_args = ["--remote-debugging-port=9222", "--remote-allow-origins=*"]
 
     if resolved:
         try:

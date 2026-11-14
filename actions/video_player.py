@@ -199,68 +199,45 @@ def video_player(parameters: dict = None, response=None, player=None,
     if not source:
         return "What should I play?"
 
+    import os
     local = _local_path(source)
     if local:
-        player.show_video(local, Path(local).name, muted=True)
-        return f"Playing {Path(local).name} on the display, muted."
+        try:
+            if os.name == "nt":
+                os.startfile(local)
+            else:
+                subprocess.Popen(["xdg-open", local])
+        except Exception as e:
+            return f"Could not open media player: {e}"
 
-    # A direct media URL can go straight to the player; a YouTube page cannot.
-    if _is_url(source) and not _YT.search(source):
-        player.show_video(source, source.rsplit("/", 1)[-1][:44], muted=True)
-        return "Playing that on the display, muted."
+        if player and hasattr(player, "write_log"):
+            player.write_log(f"▶ Opened {Path(local).name} in media player.")
+        return f"Opened {Path(local).name} in external media player."
 
-    # ANSWER FIRST, OPEN SECOND.
-    #
-    # Working out what to play takes seconds that nothing can remove: measured
-    # against YouTube, 3.3s for a spoken phrase (a search, then the video) and
-    # 2.0s for a link, plus however long Qt spends buffering before the first
-    # frame. Restricting yt-dlp to a lighter client was tried and is not the
-    # answer — the fast clients came back with zero usable formats.
-    #
-    # So the seconds stay, and what changes is where the user spends them:
-    # listening to JARVIS say it is coming, instead of watching nothing happen.
-    # The same shape whatsapp_call uses, and for the same reason.
-    threading.Thread(target=_play_youtube, args=(player, source, _begin_open()),
-                     daemon=True, name="video-open").start()
-    # Deliberately a status line rather than a finished English sentence: the
-    # model writes the words, in the user's own language.
-    return f"status=opening source={source}"
+    # Direct media URL or YouTube link: open in default browser
+    page = source if _is_url(source) else _search_page(source)
+    try:
+        webbrowser.open(page)
+    except Exception as e:
+        return f"Could not open browser: {e}"
+
+    if player and hasattr(player, "write_log"):
+        player.write_log(f"▶ Opened {source} in browser.")
+    return f"Opened {source} in your browser."
 
 
 def _play_youtube(player, source: str, token: int) -> None:
-    """The part that takes seconds. Speaks only if something goes wrong —
-    silence means the video is on screen, which the user can see for
-    themselves."""
-    try:
-        url, audio_url, title, err = _resolve_youtube(source)
-    except Exception as e:                                  # noqa: BLE001
-        url = audio_url = title = ""
-        err = str(e)
-
+    """Opens YouTube video in the default browser instead of the HUD display."""
     if not _still_wanted(token):
-        return                       # the user closed it while it was resolving
+        return
 
-    if url:
-        try:
-            player.show_video(url, title or source, muted=True,
-                              audio_source=audio_url)
-            return
-        except Exception as e:                              # noqa: BLE001
-            err = str(e)
-
-    # Resolution failed. Opening it in a browser is worse than playing it in the
-    # HUD, but it is a great deal better than doing nothing, and the reason is
-    # reported rather than swallowed.
     page = source if _YT.search(source) else _search_page(source)
-    opened = ""
     try:
         webbrowser.open(page)
-        opened = " and it has been opened in the browser instead"
-    except Exception:
-        pass
-    _say(player, "Tell the user, in one short sentence in their own language: "
-                 f"'{source}' could not be played on the display "
-                 f"({err}){opened}.")
+        if player and hasattr(player, "write_log"):
+            player.write_log(f"▶ Opened {source} in browser.")
+    except Exception as e:
+        _say(player, f"Could not open video in browser: {e}")
 
 
 def _say(player, instruction: str) -> None:
@@ -275,14 +252,13 @@ def _say(player, instruction: str) -> None:
 TOOL = {
     "name": "video_player",
     "description": (
-        "Plays a VIDEO (YouTube videos, local .mp4/.mkv video files, or video URLs) on the assistant's display. "
+        "Opens a VIDEO (YouTube videos, local .mp4/.mkv video files, or video URLs) in your default browser or external media player. "
+        "Videos are opened externally and are not played on the JARVIS HUD display. "
         "Use ONLY when the user explicitly asks to watch a video or mentions YouTube / trailer / video clip. "
         "DO NOT use for music songs, playlists or Spotify tracks — for music, songs, or Spotify playback always call 'spotify_control'."
     ),
-    # Used in place of `description` only when a small model is on a tool
-    # budget - Gemini still gets the full text. See providers/schema.py.
     "brief": (
-        "Plays a video on the HUD - a YouTube link, a local file, a URL, or a description to search for."
+        "Opens a video in the browser or external player — a YouTube link, a local file, a URL, or a search query."
     ),
     "parameters": {
         "type": "OBJECT",

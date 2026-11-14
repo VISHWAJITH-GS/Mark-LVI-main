@@ -1,4 +1,5 @@
 #computer_control.py
+from __future__ import annotations
 import io
 import json
 import platform
@@ -6,6 +7,7 @@ import re
 import string
 import subprocess
 import sys
+from typing import Any, Dict, List, Optional, Tuple
 
 if platform.system() == "Windows":
     _WIN_HIDE: dict = {"creationflags": subprocess.CREATE_NO_WINDOW}
@@ -176,24 +178,85 @@ def _user_profile() -> dict:
         pass
     return {}
 
+def _is_code_or_multiline(text: str) -> bool:
+    """Detect whether a text snippet contains code or multi-line formatted text."""
+    if not text:
+        return False
+    if "\n" in text or "\r" in text:
+        return True
+    code_indicators = [
+        "#include", "#define", "import ", "from ", "def ", "class ",
+        "int main", "void ", "public static", "System.out", "console.log",
+        "<html>", "<!doctype", "select ", "insert into", "create table",
+        "{", "}", "();", "};",
+    ]
+    t_lower = text.lower()
+    return any(ind in t_lower for ind in code_indicators)
+
+
+def _insert_code(code: str, editor_title: Optional[str] = None, language: Optional[str] = None) -> str:
+    """Safely insert code into an editor window via Windows clipboard without corrupting formatting."""
+    _require_pyautogui()
+    clean_code = str(code or "").strip()
+    # Strip markdown code fences if model enclosed code in ```
+    clean_code = re.sub(r"^```[a-zA-Z]*\n?", "", clean_code)
+    clean_code = re.sub(r"\n?```$", "", clean_code).strip()
+
+    if not clean_code:
+        return "No code provided to insert."
+
+    # If target editor specified, switch to it
+    if editor_title:
+        ed_lower = editor_title.lower().strip()
+        active_title = ""
+        try:
+            from actions import windows_uia
+            win_info = windows_uia.get_active_window()
+            if isinstance(win_info, dict):
+                active_title = (win_info.get("title") or "").lower()
+        except Exception:
+            pass
+
+        # If IDLE is targeted, handle Shell vs Editor distinction
+        if "idle" in ed_lower:
+            # If current active window is IDLE Shell, press Ctrl+N to open clean new Editor window
+            if "shell" in active_title or not ("untitled" in active_title or ".py" in active_title):
+                pyautogui.hotkey("ctrl", "n")
+                time.sleep(0.4)
+        else:
+            if ed_lower not in active_title:
+                _focus_window(editor_title)
+                time.sleep(0.3)
+
+    # Use clipboard insertion
+    if _require_pyperclip():
+        pyperclip.copy(clean_code)
+        time.sleep(0.1)
+        paste_key = "command" if _get_os() == "mac" else "ctrl"
+        pyautogui.hotkey(paste_key, "v")
+        time.sleep(0.1)
+        lines = len(clean_code.splitlines())
+        lang_str = f" ({language})" if language else ""
+        return f"Successfully inserted {lines} lines of code{lang_str} into editor."
+    else:
+        return _type(clean_code)
+
+
 def _type(text: str, interval: float = 0.008) -> str:
     _require_pyautogui()
-    time.sleep(0.3)
     text_str = str(text or "")
-    if "\n" in text_str:
-        lines = text_str.split("\n")
-        for idx, line in enumerate(lines):
-            if idx > 0:
-                pyautogui.press("enter")
-                time.sleep(0.02)
-                # Reset line to column 0 so editor's auto-indent does not compound
-                pyautogui.hotkey("shift", "home")
-                pyautogui.press("backspace")
-                time.sleep(0.01)
-            if line:
-                pyautogui.write(line, interval=interval)
-    else:
-        pyautogui.write(text_str, interval=interval)
+    if not text_str:
+        return "Typed: (empty)"
+
+    # Multi-line text or code structures should ALWAYS use clipboard paste to prevent:
+    # 1. Editor auto-closing braces duplicating ('}}')
+    # 2. Indentation mangling
+    # 3. Merged lines (#include<stdio.h>#include<stdlib.h>)
+    if _is_code_or_multiline(text_str) and _require_pyperclip():
+        return _clipboard_paste(text_str)
+
+    time.sleep(0.2)
+    pyautogui.write(text_str, interval=interval)
     return f"Typed: {text_str[:60]}{'…' if len(text_str) > 60 else ''}"
 
 
@@ -203,15 +266,14 @@ def _smart_type(text: str, clear_first: bool = True, use_clipboard: bool = False
         _clear_field()
         time.sleep(0.1)
 
-    # Use clipboard only if explicitly allowed and requested
-    if use_clipboard and _require_pyperclip():
+    # Use clipboard if explicitly requested OR if text has newlines / code
+    if (use_clipboard or _is_code_or_multiline(text)) and _require_pyperclip():
         pyperclip.copy(text)
         time.sleep(0.1)
         paste_key = "command" if _get_os() == "mac" else "ctrl"
         pyautogui.hotkey(paste_key, "v")
         return f"Smart-typed (clipboard): {text[:60]}{'…' if len(text) > 60 else ''}"
 
-    # Default to actual keystroke typing so platforms like SkillRack never block it
     return _type(text, interval=0.008)
 
 
@@ -695,6 +757,12 @@ def computer_control(
 
     try:
 
+        if action in ("insert_code", "type_code"):
+            code = params.get("code") or params.get("text", "")
+            editor = params.get("editor") or params.get("editor_title") or params.get("app_name") or params.get("title")
+            lang = params.get("language")
+            return _insert_code(code=code, editor_title=editor, language=lang)
+
         if action == "type":
             return _type(params.get("text", ""))
 
@@ -969,7 +1037,19 @@ TOOL = {
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "click | double_click | right_click | type | key_combination | hotkey | scroll | close_app | minimize_app | maximize_app | switch_app | list_running_apps | get_active_window | screen_click | uia_open | uia_find | uia_click | wait",
+                "description": "click | double_click | right_click | type | insert_code | type_code | key_combination | hotkey | scroll | close_app | minimize_app | maximize_app | switch_app | list_running_apps | get_active_window | screen_click | uia_open | uia_find | uia_click | wait",
+            },
+            "code": {
+                "type": "STRING",
+                "description": "Code snippet or multiline text to insert faithfully via clipboard into editor."
+            },
+            "language": {
+                "type": "STRING",
+                "description": "Programming language (python, c, cpp, java, javascript, html, css, sql)"
+            },
+            "editor": {
+                "type": "STRING",
+                "description": "Target editor window name (e.g. Notepad, IDLE, Visual Studio Code)"
             },
             "app_name": {
                 "type": "STRING",

@@ -7806,31 +7806,17 @@ class MainWindow(QMainWindow):
     # background thread never touches a widget.
     def _on_video_open(self, source: str, title: str, muted: bool,
                        audio_source: str = "") -> None:
-        if not HAVE_VIDEO or not self._video_player:
-            self.write_log("SYS: Video playback is not available in this Qt "
-                           "install.")
-            return
-        # A video and the live camera cannot share the centre of the HUD.
-        self._cam_stop.set()
-
-        self._video_title.setText(f"▶  {(title or 'VIDEO')[:44].upper()}")
-        self._video_split = bool(audio_source)
-        self._set_video_muted(bool(muted))
-
-        url = (QUrl.fromLocalFile(source) if Path(source).exists()
-               else QUrl(source))
-        self._video_player.setSource(url)
-        if self._video_split:
-            self._video_sound.setSource(QUrl(audio_source))
-        self._hud_cam_stack.setCurrentIndex(2)
-        self._video_on = True
-        # Re-run now that the video counts as playing: _set_video_muted ran
-        # before this line and saw no video, so its mic check was a no-op.
-        self._sync_mic_for_video()
-        self._video_player.play()
-        if self._video_split:
-            self._video_sound.play()
-            self._video_sync.start()
+        try:
+            import os, webbrowser
+            s = str(source or "")
+            if os.path.exists(s):
+                os.startfile(s)
+            elif s.startswith(("http://", "https://")):
+                webbrowser.open(s)
+            self.write_log(f"SYS: Opened video '{title or s}' in external player.")
+        except Exception:
+            pass
+        return
 
     def _fit_video(self, *_a) -> None:
         """Size the picture to the panel, keeping its shape."""
@@ -10576,13 +10562,16 @@ class JarvisUI:
 
     def show_video(self, source: str, title: str = "", muted: bool = True,
                    audio_source: str = "") -> None:
-        """Thread-safe: play a video where the avatar normally is."""
+        """Video display on HUD is removed per user request. Opens in external player."""
         try:
-            if not self._is_alive():
-                return
-            self._win._video_open_sig.emit(str(source or ""), str(title or ""),
-                                           bool(muted), str(audio_source or ""))
-        except (RuntimeError, AttributeError):
+            import os, webbrowser
+            s = str(source or "")
+            if os.path.exists(s):
+                os.startfile(s)
+            elif s.startswith(("http://", "https://")):
+                webbrowser.open(s)
+            self.write_log(f"▶ Opened video '{title or s}' in external player.")
+        except Exception:
             pass
 
     def stop_video(self) -> None:

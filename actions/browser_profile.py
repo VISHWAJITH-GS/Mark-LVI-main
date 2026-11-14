@@ -193,11 +193,29 @@ def browser_profile(parameters: Optional[dict] = None, **kwargs: Any) -> str:
         return outcome.failed("browser_profile", f"Unknown action '{action}'. Supported: select_profile, detect.")
 
 
-# TOOL disconnected — deprecated in favor of direct live Edge CDP attachment
-_DEPRECATED_TOOL = {
+TOOL = {
     "name": "browser_profile",
-    "description": "Deprecated.",
-    "parameters": {"type": "OBJECT", "properties": {}},
+    "description": "Selects or switches browser profile on native window picker or toolbar.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {
+                "type": "STRING",
+                "description": "select_profile | detect",
+            },
+            "profile_name": {
+                "type": "STRING",
+                "description": "Name of the browser profile to select",
+            },
+            "browser": {
+                "type": "STRING",
+                "description": "chrome | msedge",
+            },
+            "x": {"type": "INTEGER"},
+            "y": {"type": "INTEGER"},
+        },
+        "required": ["action"],
+    },
     "handler": browser_profile,
 }
 

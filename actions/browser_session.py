@@ -147,11 +147,10 @@ class BrowserSessionManager:
                 continue
 
         err_msg = (
-            f"[CDP Connection Error] Cannot connect to Microsoft Edge at {self.cdp_url}.\n"
-            f"Please ensure Microsoft Edge is running with remote debugging enabled:\n"
-            f"  1. Start Edge from Command Prompt / Run:\n"
-            f"     msedge.exe --remote-debugging-port=9222\n"
-            f"  2. Or navigate to edge://inspect/#remote-debugging in Edge and enable it.\n"
+            f"[CDP Connection Error] Cannot connect to browser at {self.cdp_url}.\n"
+            f"Please ensure Google Chrome or Microsoft Edge is running with remote debugging enabled:\n"
+            f"  1. Start Chrome: chrome.exe --remote-debugging-port=9222\n"
+            f"  2. Or start Edge: msedge.exe --remote-debugging-port=9222\n"
             f"  3. Set EDGE_CDP_URL environment variable if using a different port."
         )
         return False, err_msg

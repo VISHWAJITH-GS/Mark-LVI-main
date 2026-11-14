@@ -75,6 +75,7 @@ class SkillRegistry:
             (best_skill, match_score, extracted_parameters)
         """
         q = query.lower().strip()
+        q_norm = re.sub(r"[_\-\s]+", " ", q).strip()
         best_skill: Optional[SkillDefinition] = None
         best_score = 0.0
         best_params: dict = {}
@@ -86,10 +87,18 @@ class SkillRegistry:
 
         for skill in candidate_skills:
             score = 0.0
+            id_norm = re.sub(r"[_\-\s]+", " ", (skill.id or "").lower()).strip()
+            name_norm = re.sub(r"[_\-\s]+", " ", (skill.name or "").lower()).strip()
 
-            # 1. Direct name or ID match
-            if skill.name.lower() in q or skill.id in q:
-                score += 0.6
+            # 1. Exact or normalized name / ID match
+            if q == (skill.id or "").lower() or q == (skill.name or "").lower():
+                score = 1.0
+            elif q_norm == id_norm or q_norm == name_norm:
+                score = 0.95
+            elif id_norm in q_norm or name_norm in q_norm or q_norm in id_norm or q_norm in name_norm:
+                score = max(score, 0.8)
+            elif (skill.name and skill.name.lower() in q) or (skill.id and skill.id in q):
+                score = max(score, 0.7)
 
             # 2. Application match
             if skill.application and skill.application.lower() in q:

@@ -78,12 +78,37 @@ class SkillExecutor:
             )
 
         # 2. Risk confirmation gate for sensitive/destructive workflows
+        user_confirmed = bool(
+            parameters.get("__user_confirmed__", False)
+            or parameters.get("approve_skill", False)
+            or parameters.get("approved", False)
+            or parameters.get("confirm", False)
+        )
         if requires_explicit_confirmation(skill.steps, skill.permissions):
-            if not parameters.get("__user_confirmed__", False):
-                msg = f"Skill '{skill.name}' contains sensitive/destructive actions and requires confirmation."
+            if not user_confirmed:
+                from core import confirm
+                risk_level_str = "high_impact" if skill.permissions == "destructive" else "confirmation"
+                prompt_msg = confirm.request_action(
+                    action=f"skill:{skill.id}",
+                    parameters=parameters,
+                    risk_level=risk_level_str,
+                    title=f"Execute Skill: {skill.name}",
+                    detail=f"Skill '{skill.name}' performs {len(skill.steps)} automated steps including sensitive actions.",
+                    run=lambda: getattr(
+                        self.execute(
+                            skill=skill,
+                            parameters={**parameters, "__user_confirmed__": True},
+                            player=player,
+                            session_memory=session_memory,
+                            allow_unapproved=allow_unapproved,
+                        ),
+                        "message",
+                        "Skill executed successfully.",
+                    ),
+                )
                 return result_needs_confirmation(
                     action=f"skill:{skill.id}",
-                    message=msg,
+                    message=prompt_msg,
                     data={"skill_id": skill.id, "risk": skill.permissions},
                 )
 
@@ -111,9 +136,12 @@ class SkillExecutor:
         # 4. Sequential Step Execution
         step_results = []
         for step in skill.steps:
-            logger.info("Running step %d/%d: %s (%s)", step.step_id, len(skill.steps), step.thought, step.tool)
+            from core.skill_learning.skill_security import sanitize_text_and_credentials
+            step_desc = sanitize_text_and_credentials(step.thought)
+            logger.info("Running step %d/%d: %s (%s)", step.step_id, len(skill.steps), step_desc, step.tool)
+            print(f"[SKILL] Step {step.step_id}/{len(skill.steps)}: {step_desc} ({step.tool})")
             if player and hasattr(player, "write_log"):
-                player.write_log(f"Step {step.step_id}: {step.thought}")
+                player.write_log(f"▶ [Skill] Step {step.step_id}/{len(skill.steps)}: {step_desc}")
 
             # Substitute parameters into tool parameters
             sub_params = self._substitute_parameters(step.parameters, resolved_params)

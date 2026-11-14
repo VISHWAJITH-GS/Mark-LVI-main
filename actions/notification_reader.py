@@ -94,7 +94,7 @@ $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-O
 
 $accOp = $listener.RequestAccessAsync()
 $accTask = $asTaskGeneric.MakeGenericMethod([Windows.UI.Notifications.Management.UserNotificationListenerAccessStatus]).Invoke($null, @($accOp))
-$accTask.Wait(2500)
+[void]$accTask.Wait(2500)
 $status = $accTask.Result.ToString()
 
 if ($status -ne "Allowed") {
@@ -104,7 +104,7 @@ if ($status -ne "Allowed") {
 
 $op = $listener.GetNotificationsAsync([Windows.UI.Notifications.NotificationKinds]::Toast)
 $task = $asTaskGeneric.MakeGenericMethod([System.Collections.Generic.IReadOnlyList[Windows.UI.Notifications.UserNotification]]).Invoke($null, @($op))
-$task.Wait(3000)
+[void]$task.Wait(3000)
 
 $results = @()
 foreach ($n in $task.Result) {
@@ -137,16 +137,56 @@ $results | ConvertTo-Json -Depth 2
             return False, [], stderr or "Error querying notifications."
 
         try:
-            data = json.loads(stdout)
+            # Extract pure JSON payload, ignoring any leading/trailing boolean stdout lines
+            start_arr = stdout.find("[")
+            start_obj = stdout.find("{")
+            start_idx = start_arr if (start_arr != -1 and (start_obj == -1 or start_arr < start_obj)) else start_obj
+            end_arr = stdout.rfind("]")
+            end_obj = stdout.rfind("}")
+            end_idx = max(end_arr, end_obj)
+
+            if start_idx != -1 and end_idx != -1 and end_idx >= start_idx:
+                json_str = stdout[start_idx:end_idx + 1]
+            else:
+                json_str = stdout
+
+            data = json.loads(json_str)
             if isinstance(data, dict):
                 data = [data]
             notifs = []
+            seen_messages = set()
             for item in data:
-                app = item.get("App") or "System"
-                title = item.get("Title") or ""
-                body = item.get("Body") or ""
+                app = item.get("App")
+                raw_title = item.get("Title") or ""
+                raw_body = item.get("Body") or ""
+
+                if isinstance(raw_title, list):
+                    title = " — ".join(str(t).strip() for t in raw_title if t)
+                else:
+                    title = str(raw_title).strip()
+
+                if isinstance(raw_body, list):
+                    body = " — ".join(str(b).strip() for b in raw_body if b)
+                else:
+                    body = str(raw_body).strip()
+
+                if not app:
+                    if "JARVIS Reminder" in title:
+                        app = "JARVIS Reminder"
+                    else:
+                        app = "System"
+
+                # Deduplicate identical message spam
+                dedup_key = (str(app).lower(), title.lower(), body.lower())
+                if dedup_key in seen_messages:
+                    continue
+                seen_messages.add(dedup_key)
+
                 nid = str(item.get("Id") or hashlib.md5(f"{app}{title}{body}".encode()).hexdigest()[:8])
-                notifs.append(DesktopNotification(id=nid, app_name=app, title=title, body=body))
+                notifs.append(DesktopNotification(id=nid, app_name=str(app), title=title, body=body))
+
+            # Newest notifications first
+            notifs.reverse()
             return True, notifs, ""
         except Exception as e:
             return False, [], f"JSON parse error: {e}"
@@ -288,7 +328,7 @@ def notification_center(parameters: dict = None, player=None, **kwargs) -> str:
     action = (params.get("action") or "read").lower().strip()
     app_filter = params.get("app") or params.get("application") or params.get("sender")
     unread_only = bool(params.get("unread_only", False))
-    limit = int(params.get("limit") or 6)
+    limit = int(params.get("limit") or 8)
 
     reader = get_notification_reader()
 
@@ -297,8 +337,11 @@ def notification_center(parameters: dict = None, player=None, **kwargs) -> str:
     else:
         res = reader.get_notifications(app_filter=app_filter, unread_only=unread_only, limit=limit)
 
-    if player and hasattr(player, "write_log"):
-        player.write_log(f"[Notifications] 🔔 {res.message[:60]}…")
+    if player:
+        if hasattr(player, "write_log"):
+            player.write_log(f"[Notifications] 🔔 Checked notification center ({res.data.get('count', 0)} items)")
+        if hasattr(player, "show_content") and res.message:
+            player.show_content("Notification Center", res.message)
 
     from core.permissions import set_untrusted_context
     set_untrusted_context(True)
@@ -308,18 +351,19 @@ def notification_center(parameters: dict = None, player=None, **kwargs) -> str:
 TOOL = {
     "name": "notification_center",
     "description": (
-        "Reads, checks, and summarizes Windows notifications. "
-        "Use whenever the user asks: 'Read my latest notifications', 'Any new notifications?', "
-        "'Read my WhatsApp notifications', 'Summarize my notifications', or 'What did my notifications say?'. "
-        "Supports filtering by application (app='WhatsApp' or 'Outlook') and summarization (action='summarize')."
+        "Accesses the Windows Notification Center to retrieve, read, and summarize recent messages and desktop notifications. "
+        "Use whenever the user asks: 'access my notification center and tell me about recent messages', "
+        "'read my latest notifications', 'any new messages or notifications?', 'check notification center', "
+        "'what did my notifications say?', or asks for notifications from specific apps like WhatsApp or Outlook. "
+        "Actions: read (default) | summarize."
     ),
-    "brief": "Reads, filters, and summarizes Windows desktop and Action Center notifications.",
+    "brief": "Accesses Windows Notification Center to read, filter, and summarize recent messages and notifications.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "read | summarize",
+                "description": "read | summarize | messages",
             },
             "app": {
                 "type": "STRING",

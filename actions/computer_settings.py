@@ -497,25 +497,14 @@ def press_key(key: str): pyautogui.press(key)
 def type_text(text: str, press_enter_after: bool = False, use_clipboard: bool = False):
     if not text:
         return
-    if use_clipboard and _PYPERCLIP:
-        pyperclip.copy(str(text))
+    text_str = str(text)
+    # Automatically use clipboard paste for multi-line text or code to preserve formatting
+    if (use_clipboard or "\n" in text_str or "\r" in text_str) and _PYPERCLIP:
+        pyperclip.copy(text_str)
         time.sleep(0.15)
         paste()
     else:
-        text_str = str(text)
-        if "\n" in text_str:
-            lines = text_str.split("\n")
-            for idx, line in enumerate(lines):
-                if idx > 0:
-                    pyautogui.press("enter")
-                    time.sleep(0.02)
-                    pyautogui.hotkey("shift", "home")
-                    pyautogui.press("backspace")
-                    time.sleep(0.01)
-                if line:
-                    pyautogui.write(line, interval=0.008)
-        else:
-            pyautogui.write(text_str, interval=0.008)
+        pyautogui.write(text_str, interval=0.008)
     if press_enter_after:
         time.sleep(0.1)
         pyautogui.press("enter")
